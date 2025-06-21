@@ -41,6 +41,9 @@ export interface UserPreferences {
   motivationalFeedback: boolean;
   voiceInput: boolean;
   aiSuggestions: boolean;
+  focusAreas?: string[];
+  dailyRoutines?: string[];
+  goals?: string;
 }
 
 export interface AiSuggestion {

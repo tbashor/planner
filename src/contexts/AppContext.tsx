@@ -10,6 +10,7 @@ interface AppState {
   chatMessages: ChatMessage[];
   isAiChatOpen: boolean;
   isDarkMode: boolean;
+  isOnboardingComplete: boolean;
 }
 
 type AppAction =
@@ -25,7 +26,8 @@ type AppAction =
   | { type: 'ADD_CHAT_MESSAGE'; payload: ChatMessage }
   | { type: 'TOGGLE_AI_CHAT' }
   | { type: 'TOGGLE_DARK_MODE' }
-  | { type: 'COMPLETE_EVENT'; payload: string };
+  | { type: 'COMPLETE_EVENT'; payload: string }
+  | { type: 'COMPLETE_ONBOARDING'; payload: User };
 
 const AppContext = createContext<{
   state: AppState;
@@ -33,21 +35,7 @@ const AppContext = createContext<{
 } | null>(null);
 
 const initialState: AppState = {
-  user: {
-    id: '1',
-    name: 'Alex Chen',
-    email: 'alex.chen@example.com',
-    avatar: 'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=400',
-    preferences: {
-      theme: 'light',
-      timeBlockSize: 30,
-      workingHours: { start: '08:00', end: '22:00' },
-      productivityHours: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
-      motivationalFeedback: true,
-      voiceInput: true,
-      aiSuggestions: true,
-    },
-  },
+  user: null,
   events: [],
   currentWeek: new Date(),
   selectedDate: new Date(),
@@ -55,6 +43,7 @@ const initialState: AppState = {
   chatMessages: [],
   isAiChatOpen: false,
   isDarkMode: false,
+  isOnboardingComplete: false,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -100,6 +89,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         events: state.events.map(event =>
           event.id === action.payload ? { ...event, isCompleted: true } : event
         ),
+      };
+    case 'COMPLETE_ONBOARDING':
+      return { 
+        ...state, 
+        user: action.payload, 
+        isOnboardingComplete: true 
       };
     default:
       return state;
