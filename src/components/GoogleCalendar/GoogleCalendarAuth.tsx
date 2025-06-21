@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Edit3, Copy, ExternalLinkIcon, Key } from 'lucide-react';
+import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key } from 'lucide-react';
+import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
 import { useApp } from '../../contexts/AppContext';
 
@@ -9,11 +10,10 @@ export default function GoogleCalendarAuth() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<Array<{ id: string; summary: string; primary?: boolean }>>([]);
-  const [showSetupInstructions, setShowSetupInstructions] = useState(false);
-  const [showManualAuth, setShowManualAuth] = useState(false);
+  const [showConfiguration, setShowConfiguration] = useState(false);
 
   useEffect(() => {
-    setIsAuthenticated(googleCalendarService.isAuthenticated());
+    checkAuthenticationStatus();
   }, []);
 
   useEffect(() => {
@@ -22,73 +22,46 @@ export default function GoogleCalendarAuth() {
     }
   }, [isAuthenticated]);
 
-  const handleManualAuth = async () => {
-    setError(null);
+  const checkAuthenticationStatus = () => {
+    const authenticated = oauthService.isAuthenticated();
+    setIsAuthenticated(authenticated);
     
-    try {
-      const authUrl = googleCalendarService.getAuthUrl();
-      
-      // Open the auth URL in a new tab
-      window.open(authUrl, '_blank');
-      
-      // Show manual code entry
-      setShowManualAuth(true);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: '🔗 I\'ve opened the Google authorization page in a new tab. After granting permission, you\'ll get an authorization code. Please copy it and paste it in the input field below.',
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } catch (err: any) {
-      console.error('❌ Error generating auth URL:', err);
-      setError('Failed to generate authentication URL. Please check your configuration.');
+    if (authenticated) {
+      console.log('✅ User is authenticated');
+    } else {
+      console.log('❌ User is not authenticated');
     }
   };
 
-  const handleManualCodeSubmit = async (code: string) => {
-    if (!code.trim()) {
-      setError('Please enter the authorization code.');
-      return;
-    }
-
-    setIsLoading(true);
+  const handleConnect = async () => {
     setError(null);
+    setIsLoading(true);
     
     try {
-      const success = await googleCalendarService.exchangeCodeForToken(code.trim());
-      if (success) {
-        setIsAuthenticated(true);
-        setShowManualAuth(false);
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: '🎉 Perfect! Google Calendar is now connected with full editing permissions. Your calendar events will sync automatically.',
-            timestamp: new Date().toISOString(),
-          },
-        });
-      } else {
-        setError('Failed to exchange authorization code. Please make sure the code is correct and try again.');
-      }
+      console.log('🚀 Starting OAuth flow...');
+      
+      // Generate authorization URL
+      const authUrl = await oauthService.buildAuthUrl(true); // Enable PKCE
+      
+      console.log('🔗 Generated authorization URL');
+      console.log('- Redirecting to Google OAuth...');
+      
+      // Redirect to authorization URL
+      window.location.href = authUrl;
+      
     } catch (err: any) {
-      console.error('❌ Token exchange error:', err);
-      setError(err.message || 'Failed to complete authentication. Please try again.');
-    } finally {
+      console.error('❌ Error starting OAuth flow:', err);
+      setError(err.message || 'Failed to start authentication process');
       setIsLoading(false);
     }
   };
 
   const handleSignOut = () => {
+    oauthService.clearTokens();
     googleCalendarService.signOut();
     setIsAuthenticated(false);
     setCalendars([]);
     setError(null);
-    setShowManualAuth(false);
     
     // Remove Google Calendar events from state
     const nonGoogleEvents = state.events.filter(event => !event.id.startsWith('google_'));
@@ -157,6 +130,11 @@ export default function GoogleCalendarAuth() {
     }
   };
 
+  const getRedirectUriInstructions = () => {
+    const config = oauthService.getConfiguration();
+    return config.redirectUri;
+  };
+
   return (
     <div className={`p-4 border-t ${
       state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
@@ -171,7 +149,7 @@ export default function GoogleCalendarAuth() {
           Google Calendar
         </h3>
         {isAuthenticated && (
-          <Edit3 className={`h-3 w-3 ${
+          <Shield className={`h-3 w-3 ${
             state.isDarkMode ? 'text-green-400' : 'text-green-600'
           }`} />
         )}
@@ -186,7 +164,7 @@ export default function GoogleCalendarAuth() {
           <div className="flex items-start space-x-2">
             <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
             <div className="text-xs">
-              <p className="font-medium mb-1">Connection Error</p>
+              <p className="font-medium mb-1">Authentication Error</p>
               <p>{error}</p>
             </div>
           </div>
@@ -204,60 +182,61 @@ export default function GoogleCalendarAuth() {
           <div className={`p-3 rounded-lg text-xs ${
             state.isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'
           }`}>
-            <p className="font-medium mb-1">🔧 Manual Authorization Required</p>
-            <p className="mb-2">Due to the OAuth configuration, manual authorization is required. Click below to get started.</p>
+            <div className="flex items-center space-x-2 mb-2">
+              <Shield className="h-4 w-4" />
+              <span className="font-medium">Secure OAuth 2.0 Authentication</span>
+            </div>
+            <p className="mb-2">This uses industry-standard OAuth 2.0 with PKCE for maximum security. Your credentials are never stored on our servers.</p>
             <button
-              onClick={() => setShowSetupInstructions(!showSetupInstructions)}
+              onClick={() => setShowConfiguration(!showConfiguration)}
               className="text-xs underline hover:no-underline"
             >
-              {showSetupInstructions ? 'Hide' : 'Show'} setup requirements
+              {showConfiguration ? 'Hide' : 'Show'} configuration details
             </button>
           </div>
 
-          {showSetupInstructions && (
+          {showConfiguration && (
             <div className={`p-3 rounded-lg text-xs ${
               state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
             }`}>
-              <p className="font-medium mb-2">📋 Google Cloud Console Setup:</p>
-              <ol className="list-decimal list-inside space-y-1 mb-3">
-                <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Console</a></li>
-                <li>Navigate to "APIs & Services" → "Credentials"</li>
-                <li>Edit your OAuth 2.0 Client ID</li>
-                <li>In "Authorized redirect URIs", add:</li>
-              </ol>
-              
-              <div className={`p-2 rounded border font-mono text-xs mb-2 ${
-                state.isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-gray-100 border-gray-300'
-              }`}>
-                https://developers.google.com/oauthplayground
+              <p className="font-medium mb-2">📋 OAuth Configuration:</p>
+              <div className="space-y-2">
+                <div>
+                  <p className="font-medium">Required Redirect URI:</p>
+                  <div className={`p-2 rounded border font-mono text-xs mt-1 ${
+                    state.isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-gray-100 border-gray-300'
+                  }`}>
+                    {getRedirectUriInstructions()}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-medium">Setup Instructions:</p>
+                  <ol className="list-decimal list-inside space-y-1 mt-1">
+                    <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Console</a></li>
+                    <li>Navigate to "APIs & Services" → "Credentials"</li>
+                    <li>Edit your OAuth 2.0 Client ID</li>
+                    <li>Add the redirect URI above to "Authorized redirect URIs"</li>
+                    <li>Save and try connecting again</li>
+                  </ol>
+                </div>
               </div>
-              
-              <p className="text-xs opacity-75">
-                This is Google's official OAuth playground URL that works reliably with manual authorization flows.
-              </p>
             </div>
           )}
 
-          {!showManualAuth ? (
-            <button
-              onClick={handleManualAuth}
-              className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                state.isDarkMode
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
-                  : 'bg-blue-500 text-white hover:bg-blue-600'
-              }`}
-            >
-              <Key className="h-4 w-4" />
-              <span>Connect with Manual Authorization</span>
-            </button>
-          ) : (
-            <ManualAuthForm 
-              onSubmit={handleManualCodeSubmit}
-              onCancel={() => setShowManualAuth(false)}
-              isLoading={isLoading}
-              isDarkMode={state.isDarkMode}
-            />
-          )}
+          <button
+            onClick={handleConnect}
+            disabled={isLoading}
+            className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
+              isLoading
+                ? 'opacity-50 cursor-not-allowed'
+                : state.isDarkMode
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-blue-500 text-white hover:bg-blue-600'
+            }`}
+          >
+            <Key className="h-4 w-4" />
+            <span>{isLoading ? 'Connecting...' : 'Connect Google Calendar'}</span>
+          </button>
         </div>
       ) : (
         <div className="space-y-2">
@@ -278,8 +257,8 @@ export default function GoogleCalendarAuth() {
             state.isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'
           }`}>
             <div className="flex items-center space-x-1 mb-1">
-              <Edit3 className="h-3 w-3" />
-              <span className="font-medium">Full Control Enabled</span>
+              <Shield className="h-3 w-3" />
+              <span className="font-medium">Secure Connection Active</span>
             </div>
             <p>You can now drag, edit, and delete Google Calendar events directly in the calendar. Changes sync automatically!</p>
           </div>
@@ -334,72 +313,6 @@ export default function GoogleCalendarAuth() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-interface ManualAuthFormProps {
-  onSubmit: (code: string) => void;
-  onCancel: () => void;
-  isLoading: boolean;
-  isDarkMode: boolean;
-}
-
-function ManualAuthForm({ onSubmit, onCancel, isLoading, isDarkMode }: ManualAuthFormProps) {
-  const [code, setCode] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSubmit(code);
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className={`p-3 rounded-lg text-xs ${
-        isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'
-      }`}>
-        <p className="font-medium mb-1">📋 Instructions:</p>
-        <ol className="list-decimal list-inside space-y-1">
-          <li>Complete the authorization in the opened tab</li>
-          <li>Copy the authorization code from the page</li>
-          <li>Paste it in the field below</li>
-        </ol>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-2">
-        <input
-          type="text"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Paste authorization code here..."
-          className={`w-full px-3 py-2 text-xs border rounded-lg transition-colors ${
-            isDarkMode
-              ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:ring-blue-500 focus:border-blue-500'
-              : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500 focus:ring-blue-500 focus:border-blue-500'
-          } focus:outline-none focus:ring-2`}
-        />
-        
-        <div className="flex space-x-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className={`flex-1 px-3 py-2 text-xs border rounded-lg transition-colors ${
-              isDarkMode
-                ? 'border-gray-600 text-gray-300 hover:bg-gray-700'
-                : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!code.trim() || isLoading}
-            className="flex-1 px-3 py-2 bg-blue-500 text-white text-xs rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? 'Connecting...' : 'Connect'}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }
