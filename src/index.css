@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Toast UI Calendar custom styles */
+.toastui-calendar {
+  font-family: inherit;
+}
+
+/* Dark mode overrides for Toast UI Calendar */
+.dark .toastui-calendar {
+  --tui-calendar-color-background: #111827;
+  --tui-calendar-color-border: #374151;
+  --tui-calendar-color-text: #D1D5DB;
+}
+
+/* Custom event styling */
+.toastui-calendar-event {
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.toastui-calendar-event-time {
+  font-weight: 600;
+}
+
+/* Popup styling */
+.toastui-calendar-popup {
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* Week view time grid styling */
+.toastui-calendar-timegrid-timezone {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.toastui-calendar-timegrid-hourmarker {
+  font-size: 11px;
+  color: #6B7280;
+}
+
+/* Month view styling */
+.toastui-calendar-month-more-list {
+  border-radius: 6px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .toastui-calendar-timegrid-timezone {
+    font-size: 10px;
+  }
+  
+  .toastui-calendar-event {
+    font-size: 11px;
+    padding: 1px 4px;
+  }
+}
