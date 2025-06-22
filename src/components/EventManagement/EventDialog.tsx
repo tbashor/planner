@@ -151,7 +151,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
         isRecurring: true,
         recurringId: recurringId,
         recurringType: 'daily',
-        color: `${baseEvent.color}CC`, // Add transparency to recurring events
+        color: '#6B7280', // Grey color for recurring events
       });
     }
     
@@ -174,7 +174,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
         category: updatedEvent.category,
         priority: updatedEvent.priority,
         description: updatedEvent.description,
-        color: `${updatedEvent.category.color}CC`, // Keep transparency
+        color: '#6B7280', // Keep grey color for recurring events
       };
       dispatch({ type: 'UPDATE_EVENT', payload: updated });
     });
@@ -207,7 +207,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
         description: formData.description.trim(),
         isCompleted: event?.isCompleted || false,
         isStatic: false,
-        color: formData.isRecurring ? `${formData.category.color}CC` : formData.category.color,
+        color: formData.isRecurring ? '#6B7280' : formData.category.color, // Grey for recurring, category color for regular
         isRecurring: formData.isRecurring,
         recurringId: event?.recurringId,
         recurringType: formData.isRecurring ? 'daily' : undefined,
@@ -394,7 +394,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
           }`}>
             <div className="p-6">
               <div className="flex items-center space-x-3 mb-4">
-                <div className="p-2 bg-blue-500 rounded-lg">
+                <div className="p-2 bg-gray-500 rounded-lg">
                   <RefreshCw className="h-5 w-5 text-white" />
                 </div>
                 <h3 className={`text-lg font-semibold ${
@@ -415,8 +415,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                   onClick={() => setEditRecurringChoice('single')}
                   className={`w-full p-4 text-left border-2 rounded-lg transition-colors ${
                     state.isDarkMode
-                      ? 'border-gray-600 hover:border-blue-500 hover:bg-gray-700'
-                      : 'border-gray-200 hover:border-blue-500 hover:bg-blue-50'
+                      ? 'border-gray-600 hover:border-gray-500 hover:bg-gray-700'
+                      : 'border-gray-200 hover:border-gray-500 hover:bg-gray-50'
                   }`}
                 >
                   <div className={`font-medium ${
@@ -435,8 +435,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                   onClick={() => setEditRecurringChoice('all')}
                   className={`w-full p-4 text-left border-2 rounded-lg transition-colors ${
                     state.isDarkMode
-                      ? 'border-gray-600 hover:border-blue-500 hover:bg-gray-700'
-                      : 'border-gray-200 hover:border-blue-500 hover:bg-blue-50'
+                      ? 'border-gray-600 hover:border-gray-500 hover:bg-gray-700'
+                      : 'border-gray-200 hover:border-gray-500 hover:bg-gray-50'
                   }`}
                 >
                   <div className={`font-medium ${
@@ -508,7 +508,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                   {currentMode === 'create' ? 'Create New Event' : 
                    currentMode === 'edit' ? 'Edit Event' : 'Event Details'}
                   {event?.isRecurring && (
-                    <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                    <span className="ml-2 px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">
                       Recurring
                     </span>
                   )}
@@ -653,7 +653,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                 </label>
                 <label className={`flex items-center space-x-3 p-3 border rounded-lg cursor-pointer transition-colors hover:bg-opacity-50 ${
                   formData.isRecurring 
-                    ? state.isDarkMode ? 'border-blue-500 bg-blue-900 bg-opacity-20' : 'border-blue-500 bg-blue-50'
+                    ? state.isDarkMode ? 'border-gray-500 bg-gray-800' : 'border-gray-500 bg-gray-50'
                     : state.isDarkMode ? 'border-gray-600' : 'border-gray-300'
                 }`}>
                   <input
@@ -661,7 +661,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                     checked={formData.isRecurring}
                     onChange={(e) => handleInputChange('isRecurring', e.target.checked)}
                     disabled={currentMode === 'view'}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    className="w-4 h-4 text-gray-600 border-gray-300 rounded focus:ring-gray-500"
                   />
                   <div>
                     <span className={`text-sm font-medium ${
@@ -679,14 +679,14 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                 
                 {formData.isRecurring && (
                   <div className={`mt-3 p-3 rounded-lg ${
-                    state.isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'
+                    state.isDarkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-50 text-gray-600'
                   }`}>
                     <div className="flex items-center space-x-2">
                       <RefreshCw className="h-4 w-4" />
                       <span className="text-sm font-medium">Daily Recurring Event</span>
                     </div>
                     <p className="text-xs mt-1">
-                      This event will appear every day at the same time. Recurring events have a slightly transparent appearance to distinguish them from one-time events.
+                      This event will appear every day at the same time. Recurring events are displayed in grey to distinguish them from one-time events.
                     </p>
                   </div>
                 )}

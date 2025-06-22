@@ -53,7 +53,7 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
     if (event.isRecurring) {
       return {
         opacity: 0.85,
-        background: `linear-gradient(135deg, ${event.color} 0%, ${event.color}DD 100%)`,
+        background: '#6B7280', // Grey color for recurring events
         border: '1px dashed rgba(255, 255, 255, 0.3)',
       };
     }
