@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Bell, Settings, User, Moon, Sun } from 'lucide-react';
+import { Search, Bell, Settings, User, Moon, Sun, RotateCcw } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 
 export default function Header() {
@@ -15,6 +15,12 @@ export default function Header() {
 
   const toggleTheme = () => {
     dispatch({ type: 'TOGGLE_DARK_MODE' });
+  };
+
+  const resetOnboarding = () => {
+    // Clear all stored data and reset to onboarding
+    localStorage.clear();
+    window.location.reload();
   };
 
   return (
@@ -130,6 +136,17 @@ export default function Header() {
                     Preferences
                   </a>
                   <hr className={`my-1 ${state.isDarkMode ? 'border-gray-700' : 'border-gray-200'}`} />
+                  <button
+                    onClick={resetOnboarding}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-2 ${
+                      state.isDarkMode 
+                        ? 'text-yellow-400 hover:bg-gray-700' 
+                        : 'text-yellow-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>Reset Onboarding</span>
+                  </button>
                   <a href="#" className={`block px-4 py-2 text-sm hover:bg-opacity-80 transition-colors duration-200 ${
                     state.isDarkMode 
                       ? 'text-gray-300 hover:bg-gray-700' 

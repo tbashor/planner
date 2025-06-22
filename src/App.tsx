@@ -24,28 +24,31 @@ function AppContent() {
 
   useEffect(() => {
     // Only initialize mock data if not handling OAuth callback and onboarding is complete
-    if (!isOAuthCallback && state.isOnboardingComplete) {
-      // Initialize with mock data
+    // and we don't already have events loaded
+    if (!isOAuthCallback && state.isOnboardingComplete && state.events.length === 0) {
+      // Initialize with mock data only if no events are stored
       dispatch({ type: 'SET_EVENTS', payload: mockEvents });
       
       // Add initial AI suggestions
       mockAiSuggestions.forEach(suggestion => {
         dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
       });
+    }
 
-      // Add welcome message with personalized greeting
+    // Add welcome message only if no chat messages exist and onboarding is complete
+    if (!isOAuthCallback && state.isOnboardingComplete && state.chatMessages.length === 0) {
       const userName = state.user?.name || 'there';
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: 'welcome',
           type: 'ai',
-          content: `👋 Hello ${userName}! I'm your AI assistant. Based on your preferences, I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`,
+          content: `👋 Welcome back ${userName}! I'm your AI assistant. Based on your preferences, I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`,
           timestamp: new Date().toISOString(),
         },
       });
     }
-  }, [dispatch, isOAuthCallback, state.isOnboardingComplete, state.user?.name]);
+  }, [dispatch, isOAuthCallback, state.isOnboardingComplete, state.user?.name, state.events.length, state.chatMessages.length]);
 
   const handleOnboardingComplete = (data: OnboardingData) => {
     // Convert onboarding data to user preferences
