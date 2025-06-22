@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, X } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, X, Sparkles } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import GoogleCalendarAuth from '../GoogleCalendar/GoogleCalendarAuth';
-import { mockAiSuggestions } from '../../data/mockData';
+import { generatePersonalizedSuggestions } from '../../utils/aiUtils';
 
 export default function AiSidebar() {
   const { state, dispatch } = useApp();
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +65,43 @@ export default function AiSidebar() {
 
       recognition.start();
     }
+  };
+
+  const handleGenerateNewIdeas = () => {
+    if (!state.user?.preferences) return;
+
+    setIsGenerating(true);
+
+    // Clear existing suggestions
+    state.aiSuggestions.forEach(suggestion => {
+      dispatch({ type: 'REMOVE_AI_SUGGESTION', payload: suggestion.id });
+    });
+
+    // Generate new personalized suggestions
+    setTimeout(() => {
+      const newSuggestions = generatePersonalizedSuggestions(
+        state.events,
+        state.user!.preferences,
+        new Date()
+      );
+
+      newSuggestions.forEach(suggestion => {
+        dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
+      });
+
+      // Add AI message about new suggestions
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `✨ I've generated ${newSuggestions.length} new personalized suggestions based on your preferences! These are tailored to your focus areas: ${state.user!.preferences.focusAreas?.join(', ') || 'your goals'}. Check them out below!`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      setIsGenerating(false);
+    }, 1500);
   };
 
   return (
@@ -178,20 +216,46 @@ export default function AiSidebar() {
       <div className={`border-t p-4 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
-        <div className="flex items-center space-x-2 mb-3">
-          <Lightbulb className={`h-4 w-4 ${
-            state.isDarkMode ? 'text-yellow-400' : 'text-yellow-500'
-          }`} />
-          <h3 className={`text-sm font-medium ${
-            state.isDarkMode ? 'text-white' : 'text-gray-900'
-          }`}>
-            New Ideas
-          </h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-2">
+            <Lightbulb className={`h-4 w-4 ${
+              state.isDarkMode ? 'text-yellow-400' : 'text-yellow-500'
+            }`} />
+            <h3 className={`text-sm font-medium ${
+              state.isDarkMode ? 'text-white' : 'text-gray-900'
+            }`}>
+              New Ideas
+            </h3>
+          </div>
+          <button
+            onClick={handleGenerateNewIdeas}
+            disabled={isGenerating || !state.user?.preferences}
+            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+              isGenerating
+                ? 'opacity-50 cursor-not-allowed'
+                : state.isDarkMode
+                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                : 'bg-purple-500 text-white hover:bg-purple-600'
+            }`}
+          >
+            <Sparkles className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
+            <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+          </button>
         </div>
+
         <div className="space-y-2">
-          {mockAiSuggestions.slice(0, 2).map((suggestion) => (
-            <AiSuggestionCard key={suggestion.id} suggestion={suggestion} />
-          ))}
+          {state.aiSuggestions.length === 0 ? (
+            <div className={`text-center py-4 ${
+              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">Click "Generate" for personalized suggestions</p>
+            </div>
+          ) : (
+            state.aiSuggestions.slice(0, 3).map((suggestion) => (
+              <AiSuggestionCard key={suggestion.id} suggestion={suggestion} />
+            ))
+          )}
         </div>
       </div>
 
