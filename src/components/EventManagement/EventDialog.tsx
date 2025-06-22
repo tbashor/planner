@@ -123,14 +123,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
       }
     }
 
-    // Validate date is not in the past (unless editing)
-    if (formData.date && currentMode === 'create') {
-      const selectedDate = new Date(formData.date);
-      const today = startOfDay(new Date());
-      if (selectedDate < today) {
-        newErrors.date = 'This date is in the past. Would you like to schedule it for today or a future date?';
-      }
-    }
+    // Remove the past date validation - allow any date
+    // Users should be able to create events for today, yesterday, or any date
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
