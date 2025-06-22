@@ -11,6 +11,9 @@ export interface Event {
   isCompleted: boolean;
   isStatic: boolean; // For meals, fixed routines
   color: string;
+  isRecurring?: boolean;
+  recurringId?: string; // Groups recurring events together
+  recurringType?: 'daily' | 'weekly' | 'monthly';
 }
 
 export interface EventCategory {

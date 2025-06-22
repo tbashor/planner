@@ -27,7 +27,8 @@ type AppAction =
   | { type: 'TOGGLE_AI_CHAT' }
   | { type: 'TOGGLE_DARK_MODE' }
   | { type: 'COMPLETE_EVENT'; payload: string }
-  | { type: 'COMPLETE_ONBOARDING'; payload: User };
+  | { type: 'COMPLETE_ONBOARDING'; payload: User }
+  | { type: 'DELETE_RECURRING_EVENTS'; payload: string };
 
 const AppContext = createContext<{
   state: AppState;
@@ -63,6 +64,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         events: state.events.filter(event => event.id !== action.payload),
+      };
+    case 'DELETE_RECURRING_EVENTS':
+      return {
+        ...state,
+        events: state.events.filter(event => event.recurringId !== action.payload),
       };
     case 'SET_EVENTS':
       return { ...state, events: action.payload };

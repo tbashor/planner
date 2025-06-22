@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Clock, Link, MoreHorizontal, X } from 'lucide-react';
+import { Check, Clock, Link, MoreHorizontal, X, RefreshCw } from 'lucide-react';
 import { Event } from '../../types';
 import { useApp } from '../../contexts/AppContext';
 
@@ -49,6 +49,17 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
     }
   };
 
+  const getRecurringStyle = () => {
+    if (event.isRecurring) {
+      return {
+        opacity: 0.85,
+        background: `linear-gradient(135deg, ${event.color} 0%, ${event.color}DD 100%)`,
+        border: '1px dashed rgba(255, 255, 255, 0.3)',
+      };
+    }
+    return {};
+  };
+
   return (
     <div
       className={`group relative cursor-pointer rounded-lg p-2 text-white shadow-sm hover:shadow-md transition-all duration-200 ${
@@ -59,9 +70,17 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
         height: `${height}px`,
         backgroundColor: event.color,
         minHeight: '40px',
+        ...getRecurringStyle(),
       }}
       onClick={() => setShowMenu(!showMenu)}
     >
+      {/* Recurring indicator */}
+      {event.isRecurring && (
+        <div className="absolute top-1 right-1">
+          <RefreshCw className="h-3 w-3 opacity-60" />
+        </div>
+      )}
+
       {/* Event Content */}
       <div className="flex items-start justify-between h-full">
         <div className="flex-1 min-w-0">
@@ -78,6 +97,9 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
             event.isCompleted ? 'line-through' : ''
           }`}>
             {event.title}
+            {event.isRecurring && (
+              <span className="ml-1 text-xs opacity-60">↻</span>
+            )}
           </h3>
           {event.description && height > 60 && (
             <p className="text-xs opacity-75 mt-1 line-clamp-2">
@@ -136,6 +158,9 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
               }`}
             >
               Edit Event
+              {event.isRecurring && (
+                <span className="ml-1 text-xs opacity-60">(Recurring)</span>
+              )}
             </button>
             <button
               onClick={handleDelete}
@@ -147,6 +172,9 @@ export default function EventBlock({ event, height, style }: EventBlockProps) {
             >
               <X className="h-4 w-4" />
               <span>Delete</span>
+              {event.isRecurring && (
+                <span className="ml-1 text-xs opacity-60">(All)</span>
+              )}
             </button>
           </div>
         </>
