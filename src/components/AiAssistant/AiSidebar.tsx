@@ -3,17 +3,21 @@ import { MessageCircle, Lightbulb, Send, Mic, X, Sparkles } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import GoogleCalendarAuth from '../GoogleCalendar/GoogleCalendarAuth';
-import { generatePersonalizedSuggestions } from '../../utils/aiUtils';
+import { generatePersonalizedSuggestions, parseEventFromMessage, generateAIResponse } from '../../utils/aiUtils';
 
 export default function AiSidebar() {
   const { state, dispatch } = useApp();
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isProcessingMessage, setIsProcessingMessage] = useState(false);
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
+
+    const userMessage = chatInput.trim();
+    setIsProcessingMessage(true);
 
     // Add user message
     dispatch({
@@ -21,25 +25,72 @@ export default function AiSidebar() {
       payload: {
         id: Date.now().toString(),
         type: 'user',
-        content: chatInput,
+        content: userMessage,
         timestamp: new Date().toISOString(),
       },
     });
 
-    // Simulate AI response
-    setTimeout(() => {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: (Date.now() + 1).toString(),
-          type: 'ai',
-          content: `I understand you want to ${chatInput}. Let me help you optimize your schedule. I'll suggest the best time slots based on your productivity patterns.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }, 1000);
-
     setChatInput('');
+
+    try {
+      // Try to parse the message as an event creation request
+      const parsedEvent = state.user?.preferences 
+        ? parseEventFromMessage(userMessage, state.user.preferences)
+        : null;
+
+      if (parsedEvent) {
+        // Add the event to the calendar
+        dispatch({ type: 'ADD_EVENT', payload: parsedEvent });
+
+        // Generate success response
+        const successMessage = `🎉 Perfect! I've added "${parsedEvent.title}" to your calendar for ${parsedEvent.date} at ${parsedEvent.startTime}${parsedEvent.isRecurring ? ' as a daily recurring event' : ''}. The timing looks great based on your preferences!`;
+        
+        setTimeout(() => {
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: (Date.now() + 1).toString(),
+              type: 'ai',
+              content: successMessage,
+              timestamp: new Date().toISOString(),
+            },
+          });
+          setIsProcessingMessage(false);
+        }, 1000);
+      } else {
+        // Generate contextual AI response
+        const aiResponse = state.user?.preferences 
+          ? generateAIResponse(userMessage, state.user.preferences, state.events)
+          : "I'd be happy to help you with your schedule! Try asking me to schedule something like 'Add a workout tomorrow at 7am' or 'Schedule a meeting for 2pm today'.";
+
+        setTimeout(() => {
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: (Date.now() + 1).toString(),
+              type: 'ai',
+              content: aiResponse,
+              timestamp: new Date().toISOString(),
+            },
+          });
+          setIsProcessingMessage(false);
+        }, 1000);
+      }
+    } catch (error) {
+      console.error('Error processing message:', error);
+      setTimeout(() => {
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: (Date.now() + 1).toString(),
+            type: 'ai',
+            content: "I had trouble processing that request. Could you try rephrasing it? For example: 'Schedule a meeting tomorrow at 2pm' or 'Add workout today at 7am'.",
+            timestamp: new Date().toISOString(),
+          },
+        });
+        setIsProcessingMessage(false);
+      }, 1000);
+    }
   };
 
   const handleVoiceInput = () => {
@@ -144,7 +195,7 @@ export default function AiSidebar() {
           }`}>
             <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
             <p className="text-sm">Start a conversation with your AI assistant</p>
-            <p className="text-xs mt-1">Ask about scheduling, productivity tips, or task management</p>
+            <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "Add lunch today at noon"</p>
           </div>
         )}
         
@@ -169,6 +220,26 @@ export default function AiSidebar() {
             </div>
           </div>
         ))}
+
+        {/* Processing indicator */}
+        {isProcessingMessage && (
+          <div className="flex justify-start">
+            <div className={`max-w-[80%] p-3 rounded-lg ${
+              state.isDarkMode
+                ? 'bg-gray-800 text-gray-200'
+                : 'bg-white text-gray-900 border border-gray-200'
+            }`}>
+              <div className="flex items-center space-x-2">
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+                <span className="text-xs opacity-70">AI is thinking...</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Chat Input */}
@@ -180,36 +251,45 @@ export default function AiSidebar() {
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Type your message here..."
+            placeholder="Schedule a meeting, add workout, etc..."
+            disabled={isProcessingMessage}
             className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               state.isDarkMode
                 ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                 : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            }`}
+            } ${isProcessingMessage ? 'opacity-50 cursor-not-allowed' : ''}`}
           />
           {state.user?.preferences.voiceInput && (
             <button
               type="button"
               onClick={handleVoiceInput}
+              disabled={isProcessingMessage}
               className={`p-2 rounded-lg transition-colors duration-200 ${
                 isListening
                   ? 'bg-red-500 text-white'
                   : state.isDarkMode
                   ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-              }`}
+              } ${isProcessingMessage ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Mic className="h-4 w-4" />
             </button>
           )}
           <button
             type="submit"
-            disabled={!chatInput.trim()}
+            disabled={!chatInput.trim() || isProcessingMessage}
             className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
           >
             <Send className="h-4 w-4" />
           </button>
         </form>
+        
+        {/* Helper text */}
+        <div className={`mt-2 text-xs ${
+          state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+        }`}>
+          <p>💡 Try: "Add workout tomorrow 7am", "Schedule meeting today 2pm for 1 hour", "Daily lunch at noon"</p>
+        </div>
       </div>
 
       {/* AI Suggestions */}

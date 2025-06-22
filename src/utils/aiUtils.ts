@@ -1,5 +1,6 @@
 import { Event, AiSuggestion, UserPreferences } from '../types';
 import { format, addDays, addHours, startOfDay, parse } from 'date-fns';
+import { eventCategories } from '../data/mockData';
 
 export function generateSmartSuggestions(
   events: Event[],
@@ -291,6 +292,192 @@ export function generatePersonalizedSuggestions(
   }
 
   return suggestions.slice(0, 4); // Limit to 4 suggestions
+}
+
+// Natural Language Processing for Event Creation
+export function parseEventFromMessage(message: string, userPreferences: UserPreferences): Event | null {
+  const lowerMessage = message.toLowerCase();
+  
+  // Check if this is an event creation request
+  const eventKeywords = [
+    'schedule', 'add', 'create', 'book', 'plan', 'set up', 'arrange',
+    'meeting', 'appointment', 'session', 'class', 'workout', 'lunch',
+    'dinner', 'break', 'call', 'reminder', 'event'
+  ];
+  
+  const hasEventKeyword = eventKeywords.some(keyword => lowerMessage.includes(keyword));
+  if (!hasEventKeyword) return null;
+
+  // Extract event details
+  const eventDetails = extractEventDetails(message, userPreferences);
+  if (!eventDetails.title) return null;
+
+  return {
+    id: `ai_event_${Date.now()}`,
+    title: eventDetails.title,
+    startTime: eventDetails.startTime,
+    endTime: eventDetails.endTime,
+    date: eventDetails.date,
+    category: eventDetails.category,
+    priority: eventDetails.priority,
+    description: eventDetails.description,
+    isCompleted: false,
+    isStatic: false,
+    color: eventDetails.category.color,
+    isRecurring: eventDetails.isRecurring,
+  };
+}
+
+function extractEventDetails(message: string, userPreferences: UserPreferences) {
+  const today = new Date();
+  const tomorrow = addDays(today, 1);
+  
+  // Default values
+  let title = '';
+  let startTime = '09:00';
+  let endTime = '10:00';
+  let date = format(today, 'yyyy-MM-dd');
+  let category = eventCategories[2]; // Default to personal
+  let priority: 'low' | 'medium' | 'high' = 'medium';
+  let description = '';
+  let isRecurring = false;
+
+  // Extract title (remove common scheduling words)
+  title = message
+    .replace(/^(schedule|add|create|book|plan|set up|arrange)\s+/i, '')
+    .replace(/\s+(today|tomorrow|at|for|from|to)\s+.*/i, '')
+    .replace(/\s+(daily|every day|recurring)\s*/i, '')
+    .trim();
+
+  // If title is still empty or too generic, create a default
+  if (!title || title.length < 3) {
+    if (message.includes('meeting')) title = 'Meeting';
+    else if (message.includes('workout') || message.includes('exercise')) title = 'Workout';
+    else if (message.includes('lunch')) title = 'Lunch';
+    else if (message.includes('dinner')) title = 'Dinner';
+    else if (message.includes('break')) title = 'Break';
+    else if (message.includes('call')) title = 'Phone Call';
+    else if (message.includes('study')) title = 'Study Session';
+    else title = 'New Event';
+  }
+
+  // Extract time
+  const timeRegex = /(?:at\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)?/i;
+  const timeMatch = message.match(timeRegex);
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1]);
+    const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const period = timeMatch[3]?.toLowerCase();
+
+    if (period === 'pm' && hours !== 12) hours += 12;
+    if (period === 'am' && hours === 12) hours = 0;
+
+    startTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  }
+
+  // Extract duration
+  const durationRegex = /(?:for\s+)?(\d+)\s*(hour|hours|hr|hrs|minute|minutes|min|mins)/i;
+  const durationMatch = message.match(durationRegex);
+  if (durationMatch) {
+    const value = parseInt(durationMatch[1]);
+    const unit = durationMatch[2].toLowerCase();
+    
+    let durationMinutes = 60; // default 1 hour
+    if (unit.includes('hour') || unit.includes('hr')) {
+      durationMinutes = value * 60;
+    } else if (unit.includes('minute') || unit.includes('min')) {
+      durationMinutes = value;
+    }
+    
+    endTime = addMinutesToTime(startTime, durationMinutes);
+  } else {
+    // Default durations based on event type
+    if (title.toLowerCase().includes('meeting')) endTime = addMinutesToTime(startTime, 60);
+    else if (title.toLowerCase().includes('workout')) endTime = addMinutesToTime(startTime, 45);
+    else if (title.toLowerCase().includes('lunch') || title.toLowerCase().includes('dinner')) endTime = addMinutesToTime(startTime, 30);
+    else if (title.toLowerCase().includes('break')) endTime = addMinutesToTime(startTime, 15);
+    else endTime = addMinutesToTime(startTime, 60);
+  }
+
+  // Extract date
+  const dateRegex = /(?:on\s+)?(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i;
+  const dateMatch = message.match(dateRegex);
+  if (dateMatch) {
+    const dayString = dateMatch[1].toLowerCase();
+    if (dayString === 'today') {
+      date = format(today, 'yyyy-MM-dd');
+    } else if (dayString === 'tomorrow') {
+      date = format(tomorrow, 'yyyy-MM-dd');
+    }
+    // Could extend for specific days of week
+  }
+
+  // Determine category based on keywords
+  if (message.includes('workout') || message.includes('exercise') || message.includes('gym')) {
+    category = eventCategories.find(c => c.id === 'health') || eventCategories[3];
+  } else if (message.includes('study') || message.includes('learn') || message.includes('class')) {
+    category = eventCategories.find(c => c.id === 'study') || eventCategories[0];
+  } else if (message.includes('work') || message.includes('meeting') || message.includes('project')) {
+    category = eventCategories.find(c => c.id === 'work') || eventCategories[1];
+  } else if (message.includes('lunch') || message.includes('dinner') || message.includes('breakfast') || message.includes('meal')) {
+    category = eventCategories.find(c => c.id === 'meal') || eventCategories[5];
+  } else if (message.includes('friend') || message.includes('social') || message.includes('party')) {
+    category = eventCategories.find(c => c.id === 'social') || eventCategories[4];
+  }
+
+  // Check for recurring
+  if (message.includes('daily') || message.includes('every day') || message.includes('recurring')) {
+    isRecurring = true;
+  }
+
+  // Determine priority
+  if (message.includes('important') || message.includes('urgent') || message.includes('critical')) {
+    priority = 'high';
+  } else if (message.includes('optional') || message.includes('if possible') || message.includes('maybe')) {
+    priority = 'low';
+  }
+
+  // Create description
+  description = `Created by AI assistant from: "${message}"`;
+
+  return {
+    title,
+    startTime,
+    endTime,
+    date,
+    category,
+    priority,
+    description,
+    isRecurring
+  };
+}
+
+export function generateAIResponse(message: string, userPreferences: UserPreferences, events: Event[]): string {
+  const lowerMessage = message.toLowerCase();
+  
+  // Check if user is asking about their schedule
+  if (lowerMessage.includes('schedule') && (lowerMessage.includes('today') || lowerMessage.includes('what'))) {
+    const todayEvents = events.filter(e => e.date === format(new Date(), 'yyyy-MM-dd'));
+    if (todayEvents.length === 0) {
+      return "You have a free day today! Would you like me to suggest some activities based on your focus areas?";
+    } else {
+      const eventList = todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ');
+      return `Here's your schedule for today: ${eventList}. Is there anything you'd like to add or change?`;
+    }
+  }
+
+  // Check if user is asking for suggestions
+  if (lowerMessage.includes('suggest') || lowerMessage.includes('recommend') || lowerMessage.includes('what should')) {
+    const focusAreas = userPreferences.focusAreas || [];
+    if (focusAreas.length > 0) {
+      return `Based on your focus areas (${focusAreas.join(', ')}), I can suggest some activities. Would you like me to add a study session, workout, or work block to your calendar?`;
+    } else {
+      return "I'd be happy to suggest some activities! What are you in the mood for - something productive, relaxing, or health-focused?";
+    }
+  }
+
+  // Default response for event creation
+  return "I understand you'd like to schedule something. I've analyzed your request and will add it to your calendar with the optimal timing based on your preferences!";
 }
 
 function getOptimalTimeForActivity(
