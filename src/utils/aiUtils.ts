@@ -49,6 +49,81 @@ export function generateSmartSuggestions(
   return suggestions;
 }
 
+// Enhanced suggestion pool with more variety
+const suggestionTemplates = {
+  health: [
+    {
+      titles: ['Morning Yoga Session', 'Evening Workout', 'Cardio Training', 'Strength Training', 'Pilates Class', 'Swimming Session', 'Running Time', 'Stretching Break', 'Meditation Session', 'Breathing Exercise'],
+      descriptions: ['Start your day with energizing movement', 'End your day with physical activity', 'Boost your cardiovascular health', 'Build muscle and strength', 'Improve flexibility and core strength', 'Full-body low-impact exercise', 'Improve endurance and mental clarity', 'Release tension and improve flexibility', 'Practice mindfulness and reduce stress', 'Center yourself with focused breathing'],
+      durations: [30, 45, 60, 20, 90],
+      times: ['07:00', '07:30', '08:00', '17:00', '17:30', '18:00', '18:30', '19:00']
+    }
+  ],
+  study: [
+    {
+      titles: ['Deep Learning Session', 'Skill Development Time', 'Research Block', 'Practice Session', 'Review & Consolidation', 'Creative Learning', 'Problem Solving Time', 'Knowledge Building', 'Focused Study Block', 'Learning Sprint'],
+      descriptions: ['Dive deep into complex topics', 'Develop new skills and abilities', 'Explore and gather information', 'Apply what you\'ve learned', 'Reinforce and organize knowledge', 'Learn through creative methods', 'Tackle challenging problems', 'Build foundational knowledge', 'Concentrated learning time', 'Intensive learning session'],
+      durations: [60, 90, 120, 45, 75],
+      times: ['09:00', '09:30', '10:00', '10:30', '14:00', '14:30', '15:00', '20:00']
+    }
+  ],
+  work: [
+    {
+      titles: ['Strategic Planning', 'Project Development', 'Skill Enhancement', 'Network Building', 'Goal Setting Session', 'Career Planning', 'Professional Development', 'Innovation Time', 'Process Improvement', 'Leadership Development'],
+      descriptions: ['Plan your long-term career strategy', 'Work on important projects', 'Develop professional skills', 'Build valuable connections', 'Set and review career goals', 'Plan your career trajectory', 'Invest in professional growth', 'Explore new ideas and solutions', 'Optimize your workflows', 'Develop leadership capabilities'],
+      durations: [60, 90, 45, 30, 120],
+      times: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00']
+    }
+  ],
+  personal: [
+    {
+      titles: ['Self-Care Time', 'Personal Reflection', 'Hobby Time', 'Creative Expression', 'Personal Organization', 'Life Planning', 'Mindfulness Practice', 'Personal Growth', 'Relaxation Time', 'Digital Detox'],
+      descriptions: ['Take care of your well-being', 'Reflect on your journey and goals', 'Engage in activities you love', 'Express yourself creatively', 'Organize your personal space', 'Plan your personal life', 'Practice being present', 'Work on personal development', 'Unwind and recharge', 'Disconnect from technology'],
+      durations: [30, 45, 60, 90, 20],
+      times: ['19:00', '19:30', '20:00', '20:30', '21:00', '08:00', '08:30']
+    }
+  ],
+  social: [
+    {
+      titles: ['Social Connection Time', 'Community Engagement', 'Relationship Building', 'Social Activity', 'Group Learning', 'Collaborative Project', 'Social Support', 'Networking Event', 'Social Wellness', 'Team Building'],
+      descriptions: ['Connect with friends and family', 'Engage with your community', 'Strengthen relationships', 'Participate in social activities', 'Learn with others', 'Work on shared goals', 'Give and receive support', 'Meet new people professionally', 'Maintain social well-being', 'Build team connections'],
+      durations: [60, 90, 120, 45, 30],
+      times: ['12:00', '17:00', '18:00', '19:00', '20:00']
+    }
+  ],
+  meal: [
+    {
+      titles: ['Mindful Breakfast', 'Nutritious Lunch', 'Healthy Dinner', 'Meal Prep Session', 'Cooking Time', 'Nutrition Planning', 'Hydration Break', 'Snack Time', 'Family Meal', 'Cooking Practice'],
+      descriptions: ['Start your day with proper nutrition', 'Fuel your afternoon with healthy food', 'End your day with a balanced meal', 'Prepare meals for the week', 'Practice culinary skills', 'Plan your nutritional needs', 'Stay properly hydrated', 'Healthy snacking time', 'Connect over food', 'Improve cooking abilities'],
+      durations: [30, 45, 60, 90, 15],
+      times: ['08:00', '12:00', '18:00', '19:00', '10:00', '15:00']
+    }
+  ]
+};
+
+// Motivational and productivity insights
+const productivityInsights = [
+  'Your most productive hours are showing a pattern - let\'s optimize around them',
+  'I notice you complete more tasks when you schedule breaks - shall we add some?',
+  'Your energy levels seem highest in the morning - perfect for important work',
+  'You\'ve been consistent with your routines - time to level up with new challenges',
+  'Your focus areas are well-balanced - let\'s maintain this momentum',
+  'I see opportunities to batch similar tasks for better efficiency',
+  'Your schedule has good variety - this promotes sustained motivation',
+  'You\'re building excellent habits - let\'s reinforce them with strategic timing'
+];
+
+const optimizationSuggestions = [
+  'Consider time-blocking similar activities for better focus',
+  'Your schedule could benefit from strategic buffer time',
+  'Grouping related tasks can improve your workflow efficiency',
+  'Adding transition time between different types of activities helps mental switching',
+  'Your peak energy hours deserve your most important tasks',
+  'Regular review sessions can help you stay on track with goals',
+  'Scheduling preparation time before important events reduces stress',
+  'Building in flexibility helps you adapt to unexpected changes'
+];
+
 export function generatePersonalizedSuggestions(
   events: Event[],
   preferences: UserPreferences,
@@ -57,155 +132,129 @@ export function generatePersonalizedSuggestions(
   const suggestions: AiSuggestion[] = [];
   const today = format(currentDate, 'yyyy-MM-dd');
   const tomorrow = format(addDays(currentDate, 1), 'yyyy-MM-dd');
+  const dayAfterTomorrow = format(addDays(currentDate, 2), 'yyyy-MM-dd');
 
   // Get user's focus areas and daily routines
   const focusAreas = preferences.focusAreas || [];
   const dailyRoutines = preferences.dailyRoutines || [];
   const productivityHours = preferences.productivityHours || [];
 
-  // Suggest events based on focus areas
-  if (focusAreas.includes('health-fitness')) {
-    const hasWorkout = events.some(e => 
-      e.category.name === 'Health' && 
-      (e.date === today || e.date === tomorrow)
+  // Generate unique timestamp for this session
+  const sessionId = Date.now();
+  const randomSeed = Math.floor(Math.random() * 1000);
+
+  // Helper function to get random item from array
+  const getRandomItem = (array: any[], index: number = 0) => {
+    const randomIndex = (sessionId + randomSeed + index) % array.length;
+    return array[randomIndex];
+  };
+
+  // Helper function to get random time that doesn't conflict with existing events
+  const getAvailableTime = (preferredTimes: string[], targetDate: string) => {
+    const dayEvents = events.filter(e => e.date === targetDate);
+    const busyTimes = dayEvents.map(e => e.startTime);
+    
+    const availableTimes = preferredTimes.filter(time => 
+      !busyTimes.some(busyTime => Math.abs(
+        parseInt(time.split(':')[0]) - parseInt(busyTime.split(':')[0])
+      ) < 1)
     );
     
-    if (!hasWorkout) {
-      const optimalTime = getOptimalTimeForActivity('workout', productivityHours, preferences.workingHours);
+    return availableTimes.length > 0 
+      ? getRandomItem(availableTimes, Math.floor(Math.random() * 100))
+      : getRandomItem(preferredTimes, Math.floor(Math.random() * 100));
+  };
+
+  // Generate suggestions based on focus areas with more variety
+  focusAreas.forEach((area, index) => {
+    let categoryKey = '';
+    let categoryId = '';
+    
+    switch (area) {
+      case 'health-fitness':
+        categoryKey = 'health';
+        categoryId = 'health';
+        break;
+      case 'learning-education':
+        categoryKey = 'study';
+        categoryId = 'study';
+        break;
+      case 'work-career':
+        categoryKey = 'work';
+        categoryId = 'work';
+        break;
+      case 'self-care':
+        categoryKey = 'personal';
+        categoryId = 'personal';
+        break;
+      case 'relationships':
+        categoryKey = 'social';
+        categoryId = 'social';
+        break;
+      case 'hobbies-interests':
+        categoryKey = 'personal';
+        categoryId = 'personal';
+        break;
+    }
+
+    if (categoryKey && suggestionTemplates[categoryKey as keyof typeof suggestionTemplates]) {
+      const template = suggestionTemplates[categoryKey as keyof typeof suggestionTemplates][0];
+      const title = getRandomItem(template.titles, index);
+      const description = getRandomItem(template.descriptions, index);
+      const duration = getRandomItem(template.durations, index);
+      const startTime = getAvailableTime(template.times, tomorrow);
+      const endTime = addMinutesToTime(startTime, duration);
+
+      // Vary the target date
+      const targetDates = [tomorrow, dayAfterTomorrow];
+      const targetDate = getRandomItem(targetDates, index);
+
       suggestions.push({
-        id: `workout-${Date.now()}`,
+        id: `${categoryKey}-${sessionId}-${index}`,
         type: 'schedule',
-        title: 'Schedule Workout Session',
-        description: `Add a 45-minute workout at ${optimalTime} based on your health & fitness goals`,
+        title: title,
+        description: `${description} - Perfect for your ${area.replace('-', ' & ')} goals`,
         action: JSON.stringify({
           type: 'create_event',
           event: {
-            title: 'Workout Session',
-            startTime: optimalTime,
-            endTime: addMinutesToTime(optimalTime, 45),
-            date: tomorrow,
-            category: 'health',
-            priority: 'medium',
-            description: 'Stay active and maintain your fitness routine'
+            title: title,
+            startTime: startTime,
+            endTime: endTime,
+            date: targetDate,
+            category: categoryId,
+            priority: getRandomItem(['medium', 'high'], index),
+            description: `${description}. Suggested by AI based on your focus on ${area.replace('-', ' & ')}.`
           }
         }),
         priority: 1,
         createdAt: new Date().toISOString(),
       });
     }
-  }
+  });
 
-  if (focusAreas.includes('learning-education')) {
-    const hasStudy = events.some(e => 
-      e.category.name === 'Study' && 
-      (e.date === today || e.date === tomorrow)
-    );
-    
-    if (!hasStudy) {
-      const optimalTime = getOptimalTimeForActivity('study', productivityHours, preferences.workingHours);
-      suggestions.push({
-        id: `study-${Date.now()}`,
-        type: 'schedule',
-        title: 'Schedule Learning Time',
-        description: `Block 90 minutes at ${optimalTime} for focused learning during your peak hours`,
-        action: JSON.stringify({
-          type: 'create_event',
-          event: {
-            title: 'Learning Session',
-            startTime: optimalTime,
-            endTime: addMinutesToTime(optimalTime, 90),
-            date: tomorrow,
-            category: 'study',
-            priority: 'high',
-            description: 'Dedicated time for learning and skill development'
-          }
-        }),
-        priority: 1,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
+  // Add routine-based suggestions with variety
+  if (dailyRoutines.includes('exercise')) {
+    const healthTemplate = suggestionTemplates.health[0];
+    const exerciseTitle = getRandomItem(healthTemplate.titles, sessionId % 7);
+    const exerciseDescription = getRandomItem(healthTemplate.descriptions, sessionId % 7);
+    const exerciseDuration = getRandomItem(healthTemplate.durations, sessionId % 5);
+    const exerciseTime = getAvailableTime(healthTemplate.times, tomorrow);
 
-  if (focusAreas.includes('work-career')) {
-    const hasCareerWork = events.some(e => 
-      (e.category.name === 'Work' || e.title.toLowerCase().includes('career')) && 
-      (e.date === today || e.date === tomorrow)
-    );
-    
-    if (!hasCareerWork) {
-      const optimalTime = getOptimalTimeForActivity('work', productivityHours, preferences.workingHours);
-      suggestions.push({
-        id: `career-${Date.now()}`,
-        type: 'schedule',
-        title: 'Career Development Time',
-        description: `Schedule 60 minutes at ${optimalTime} for career-focused activities`,
-        action: JSON.stringify({
-          type: 'create_event',
-          event: {
-            title: 'Career Development',
-            startTime: optimalTime,
-            endTime: addMinutesToTime(optimalTime, 60),
-            date: tomorrow,
-            category: 'work',
-            priority: 'high',
-            description: 'Focus on career growth and professional development'
-          }
-        }),
-        priority: 1,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-
-  if (focusAreas.includes('self-care')) {
-    const hasSelfCare = events.some(e => 
-      (e.category.name === 'Personal' || e.title.toLowerCase().includes('self-care')) && 
-      (e.date === today || e.date === tomorrow)
-    );
-    
-    if (!hasSelfCare) {
-      const optimalTime = getOptimalTimeForActivity('selfcare', productivityHours, preferences.workingHours);
-      suggestions.push({
-        id: `selfcare-${Date.now()}`,
-        type: 'schedule',
-        title: 'Self-Care Time',
-        description: `Block 30 minutes at ${optimalTime} for relaxation and self-care`,
-        action: JSON.stringify({
-          type: 'create_event',
-          event: {
-            title: 'Self-Care Time',
-            startTime: optimalTime,
-            endTime: addMinutesToTime(optimalTime, 30),
-            date: tomorrow,
-            category: 'personal',
-            priority: 'medium',
-            description: 'Time for relaxation, meditation, or personal wellness'
-          }
-        }),
-        priority: 2,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-
-  // Suggest routine-based events
-  if (dailyRoutines.includes('exercise') && !events.some(e => e.category.name === 'Health' && e.date === tomorrow)) {
-    const exerciseTime = getOptimalTimeForActivity('exercise', productivityHours, preferences.workingHours);
     suggestions.push({
-      id: `routine-exercise-${Date.now()}`,
+      id: `routine-exercise-${sessionId}`,
       type: 'schedule',
-      title: 'Daily Exercise Routine',
-      description: `Add your regular exercise routine at ${exerciseTime}`,
+      title: `Daily ${exerciseTitle}`,
+      description: `${exerciseDescription} - Part of your daily routine`,
       action: JSON.stringify({
         type: 'create_event',
         event: {
-          title: 'Exercise Routine',
+          title: exerciseTitle,
           startTime: exerciseTime,
-          endTime: addMinutesToTime(exerciseTime, 45),
+          endTime: addMinutesToTime(exerciseTime, exerciseDuration),
           date: tomorrow,
           category: 'health',
           priority: 'medium',
-          description: 'Daily exercise routine to stay healthy and energized'
+          description: `${exerciseDescription}. Daily routine suggested by AI.`
         }
       }),
       priority: 2,
@@ -213,74 +262,83 @@ export function generatePersonalizedSuggestions(
     });
   }
 
-  // Suggest meal planning if user has meal routines
-  if (dailyRoutines.includes('breakfast') && !events.some(e => e.category.name === 'Meal' && e.title.includes('Breakfast') && e.date === tomorrow)) {
+  // Add productivity insights
+  const completedEvents = events.filter(e => e.isCompleted);
+  if (completedEvents.length > 3) {
+    const insight = getRandomItem(productivityInsights, sessionId % 10);
     suggestions.push({
-      id: `breakfast-${Date.now()}`,
-      type: 'schedule',
-      title: 'Schedule Breakfast',
-      description: 'Add your regular breakfast time to maintain routine',
+      id: `productivity-insight-${sessionId}`,
+      type: 'optimize',
+      title: 'Productivity Insight',
+      description: insight,
       action: JSON.stringify({
-        type: 'create_event',
-        event: {
-          title: 'Breakfast',
-          startTime: '08:00',
-          endTime: '08:30',
-          date: tomorrow,
-          category: 'meal',
-          priority: 'low',
-          description: 'Start the day with a healthy breakfast'
-        }
+        type: 'productivity_insight',
+        data: analyzeProductivityPatterns(events)
       }),
-      priority: 3,
+      priority: 2,
       createdAt: new Date().toISOString(),
     });
   }
 
-  // Optimize existing schedule
+  // Add optimization suggestions
   const busyHours = getBusyHours(events, today);
-  if (busyHours.length > 6) {
+  if (busyHours.length > 4) {
+    const optimization = getRandomItem(optimizationSuggestions, sessionId % 8);
     suggestions.push({
-      id: `optimize-schedule-${Date.now()}`,
+      id: `optimize-schedule-${sessionId}`,
       type: 'optimize',
-      title: 'Optimize Your Schedule',
-      description: 'Your day looks packed! Consider rescheduling some non-critical tasks',
+      title: 'Schedule Optimization',
+      description: optimization,
       action: JSON.stringify({
         type: 'optimize_schedule',
-        suggestion: 'Move lower priority tasks to less busy time slots'
+        suggestion: optimization
       }),
       priority: 1,
       createdAt: new Date().toISOString(),
     });
   }
 
-  // Suggest breaks between intensive work
+  // Add break suggestions with variety
   const intensiveEvents = events.filter(e => 
     (e.category.name === 'Study' || e.category.name === 'Work') && 
     e.date === today
   ).sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   if (intensiveEvents.length >= 2) {
-    for (let i = 0; i < intensiveEvents.length - 1; i++) {
+    const breakActivities = [
+      'Mindful Break', 'Stretch Break', 'Fresh Air Break', 'Hydration Break', 
+      'Eye Rest Break', 'Movement Break', 'Breathing Break', 'Mental Reset'
+    ];
+    const breakDescriptions = [
+      'Take a moment for mindfulness', 'Stretch and release tension', 
+      'Step outside for fresh air', 'Stay hydrated and refreshed',
+      'Rest your eyes and mind', 'Get your body moving', 
+      'Practice deep breathing', 'Clear your mind and refocus'
+    ];
+
+    for (let i = 0; i < Math.min(intensiveEvents.length - 1, 2); i++) {
       const current = intensiveEvents[i];
       const next = intensiveEvents[i + 1];
       
-      if (getTimeDifference(current.endTime, next.startTime) < 15) {
+      if (getTimeDifference(current.endTime, next.startTime) < 30) {
+        const breakTitle = getRandomItem(breakActivities, sessionId + i);
+        const breakDescription = getRandomItem(breakDescriptions, sessionId + i);
+        
         suggestions.push({
-          id: `break-between-${Date.now()}-${i}`,
+          id: `break-between-${sessionId}-${i}`,
           type: 'break',
-          title: 'Add Break Time',
-          description: `Consider a 15-minute break between "${current.title}" and "${next.title}"`,
+          title: `Add ${breakTitle}`,
+          description: `${breakDescription} between "${current.title}" and "${next.title}"`,
           action: JSON.stringify({
             type: 'create_event',
             event: {
-              title: 'Break',
+              title: breakTitle,
               startTime: current.endTime,
               endTime: addMinutesToTime(current.endTime, 15),
               date: current.date,
               category: 'personal',
               priority: 'low',
-              description: 'Short break to recharge and refocus'
+              description: `${breakDescription}. Suggested break by AI.`
             }
           }),
           priority: 2,
@@ -291,30 +349,90 @@ export function generatePersonalizedSuggestions(
     }
   }
 
-  // Add preference-adaptive suggestions
-  if (preferences.aiSuggestions) {
-    // Suggest time blocks based on productivity patterns
-    const completedEvents = events.filter(e => e.isCompleted);
-    if (completedEvents.length > 5) {
-      const patterns = analyzeProductivityPatterns(events);
-      if (patterns.mostProductiveHours.length > 0) {
-        suggestions.push({
-          id: `productivity-insight-${Date.now()}`,
-          type: 'optimize',
-          title: 'Productivity Pattern Insight',
-          description: `Your most productive hours are ${patterns.mostProductiveHours.join(', ')}. Consider scheduling important tasks during these times.`,
-          action: JSON.stringify({
-            type: 'productivity_insight',
-            data: patterns
-          }),
-          priority: 2,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    }
+  // Add meal suggestions if user has meal routines
+  if (dailyRoutines.includes('breakfast') || dailyRoutines.includes('lunch') || dailyRoutines.includes('dinner')) {
+    const mealTemplate = suggestionTemplates.meal[0];
+    const mealTitle = getRandomItem(mealTemplate.titles, sessionId % 10);
+    const mealDescription = getRandomItem(mealTemplate.descriptions, sessionId % 10);
+    const mealTime = getRandomItem(['08:00', '12:30', '18:30'], sessionId % 3);
+    
+    suggestions.push({
+      id: `meal-suggestion-${sessionId}`,
+      type: 'schedule',
+      title: mealTitle,
+      description: `${mealDescription} - Supporting your nutrition routine`,
+      action: JSON.stringify({
+        type: 'create_event',
+        event: {
+          title: mealTitle,
+          startTime: mealTime,
+          endTime: addMinutesToTime(mealTime, 30),
+          date: tomorrow,
+          category: 'meal',
+          priority: 'medium',
+          description: `${mealDescription}. Meal routine suggested by AI.`
+        }
+      }),
+      priority: 3,
+      createdAt: new Date().toISOString(),
+    });
   }
 
-  return suggestions.slice(0, 4); // Limit to 4 suggestions
+  // Add creative/variety suggestions
+  const creativeSuggestions = [
+    {
+      title: 'Creative Exploration',
+      description: 'Try something new and creative today',
+      category: 'personal',
+      duration: 45
+    },
+    {
+      title: 'Learning Adventure',
+      description: 'Explore a topic that interests you',
+      category: 'study',
+      duration: 60
+    },
+    {
+      title: 'Social Connection',
+      description: 'Reach out to someone important to you',
+      category: 'social',
+      duration: 30
+    },
+    {
+      title: 'Wellness Check',
+      description: 'Take time to assess and improve your well-being',
+      category: 'health',
+      duration: 30
+    }
+  ];
+
+  const creativeSuggestion = getRandomItem(creativeSuggestions, sessionId % 4);
+  const creativeTime = getAvailableTime(['10:00', '14:00', '16:00', '19:00'], tomorrow);
+  
+  suggestions.push({
+    id: `creative-${sessionId}`,
+    type: 'schedule',
+    title: creativeSuggestion.title,
+    description: creativeSuggestion.description,
+    action: JSON.stringify({
+      type: 'create_event',
+      event: {
+        title: creativeSuggestion.title,
+        startTime: creativeTime,
+        endTime: addMinutesToTime(creativeTime, creativeSuggestion.duration),
+        date: tomorrow,
+        category: creativeSuggestion.category,
+        priority: 'medium',
+        description: `${creativeSuggestion.description}. Creative suggestion by AI.`
+      }
+    }),
+    priority: 3,
+    createdAt: new Date().toISOString(),
+  });
+
+  // Shuffle and return limited suggestions to ensure variety
+  const shuffledSuggestions = suggestions.sort(() => Math.random() - 0.5);
+  return shuffledSuggestions.slice(0, 4);
 }
 
 // Natural Language Processing for Event Creation
