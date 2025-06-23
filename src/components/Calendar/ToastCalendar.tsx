@@ -203,79 +203,14 @@ export default function ToastCalendar() {
     }
   };
 
-  // Calendar options
-  const calendarOptions = {
-    defaultView: view,
-    useCreationPopup: false, // We'll use our custom dialog
-    useDetailPopup: false,   // We'll use our custom dialog
-    isReadOnly: false,
-    usageStatistics: false,
-    week: {
-      startDayOfWeek: 0,
-      dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-      hourStart: 6,
-      hourEnd: 23,
-      eventView: ['time'],
-      taskView: false,
-      collapseDuplicateEvents: false,
-    },
-    month: {
-      dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-      visibleWeeksCount: 6,
-      workweek: false,
-    },
-    calendars: [
-      {
-        id: 'study',
-        name: 'Study',
-        backgroundColor: '#3B82F6',
-        borderColor: '#3B82F6',
-        dragBackgroundColor: '#3B82F6',
-      },
-      {
-        id: 'work',
-        name: 'Work',
-        backgroundColor: '#10B981',
-        borderColor: '#10B981',
-        dragBackgroundColor: '#10B981',
-      },
-      {
-        id: 'personal',
-        name: 'Personal',
-        backgroundColor: '#F59E0B',
-        borderColor: '#F59E0B',
-        dragBackgroundColor: '#F59E0B',
-      },
-      {
-        id: 'health',
-        name: 'Health',
-        backgroundColor: '#EF4444',
-        borderColor: '#EF4444',
-        dragBackgroundColor: '#EF4444',
-      },
-      {
-        id: 'social',
-        name: 'Social',
-        backgroundColor: '#8B5CF6',
-        borderColor: '#8B5CF6',
-        dragBackgroundColor: '#8B5CF6',
-      },
-      {
-        id: 'meal',
-        name: 'Meal',
-        backgroundColor: '#EC4899',
-        borderColor: '#EC4899',
-        dragBackgroundColor: '#EC4899',
-      },
-      {
-        id: 'imported',
-        name: 'Google Calendar',
-        backgroundColor: '#6B7280',
-        borderColor: '#6B7280',
-        dragBackgroundColor: '#6B7280',
-      },
-    ],
-    theme: state.isDarkMode ? {
+  // Create theme configuration that avoids read-only property issues
+  const createThemeConfig = () => {
+    if (!state.isDarkMode) {
+      return {}; // Use default theme for light mode
+    }
+
+    // Create a completely new theme object to avoid read-only issues
+    return {
       common: {
         backgroundColor: '#111827',
         border: '1px solid #374151',
@@ -335,7 +270,91 @@ export default function ToastCalendar() {
           backgroundColor: '#1F2937',
         },
       },
-    } : {},
+    };
+  };
+
+  // Calendar options with proper theme handling
+  const getCalendarOptions = () => {
+    const baseOptions = {
+      defaultView: view,
+      useCreationPopup: false,
+      useDetailPopup: false,
+      isReadOnly: false,
+      usageStatistics: false,
+      week: {
+        startDayOfWeek: 0,
+        dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        hourStart: 6,
+        hourEnd: 23,
+        eventView: ['time'],
+        taskView: false,
+        collapseDuplicateEvents: false,
+      },
+      month: {
+        dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        visibleWeeksCount: 6,
+        workweek: false,
+      },
+      calendars: [
+        {
+          id: 'study',
+          name: 'Study',
+          backgroundColor: '#3B82F6',
+          borderColor: '#3B82F6',
+          dragBackgroundColor: '#3B82F6',
+        },
+        {
+          id: 'work',
+          name: 'Work',
+          backgroundColor: '#10B981',
+          borderColor: '#10B981',
+          dragBackgroundColor: '#10B981',
+        },
+        {
+          id: 'personal',
+          name: 'Personal',
+          backgroundColor: '#F59E0B',
+          borderColor: '#F59E0B',
+          dragBackgroundColor: '#F59E0B',
+        },
+        {
+          id: 'health',
+          name: 'Health',
+          backgroundColor: '#EF4444',
+          borderColor: '#EF4444',
+          dragBackgroundColor: '#EF4444',
+        },
+        {
+          id: 'social',
+          name: 'Social',
+          backgroundColor: '#8B5CF6',
+          borderColor: '#8B5CF6',
+          dragBackgroundColor: '#8B5CF6',
+        },
+        {
+          id: 'meal',
+          name: 'Meal',
+          backgroundColor: '#EC4899',
+          borderColor: '#EC4899',
+          dragBackgroundColor: '#EC4899',
+        },
+        {
+          id: 'imported',
+          name: 'Google Calendar',
+          backgroundColor: '#6B7280',
+          borderColor: '#6B7280',
+          dragBackgroundColor: '#6B7280',
+        },
+      ],
+    };
+
+    // Only add theme if in dark mode
+    const themeConfig = createThemeConfig();
+    if (Object.keys(themeConfig).length > 0) {
+      return { ...baseOptions, theme: themeConfig };
+    }
+
+    return baseOptions;
   };
 
   // Event handlers
@@ -592,7 +611,13 @@ export default function ToastCalendar() {
   useEffect(() => {
     if (calendarRef.current) {
       const calendarInstance = calendarRef.current.getInstance();
-      calendarInstance.setTheme(calendarOptions.theme);
+      const themeConfig = createThemeConfig();
+      if (Object.keys(themeConfig).length > 0) {
+        calendarInstance.setTheme(themeConfig);
+      } else {
+        // Reset to default theme for light mode
+        calendarInstance.setTheme({});
+      }
     }
   }, [state.isDarkMode]);
 
@@ -602,6 +627,8 @@ export default function ToastCalendar() {
       loadGoogleCalendarEvents(currentCalendarDate);
     }
   }, []);
+
+  const calendarOptions = getCalendarOptions();
 
   return (
     <div className={`flex-1 flex flex-col h-full ${
