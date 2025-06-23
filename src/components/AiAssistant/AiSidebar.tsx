@@ -1,9 +1,23 @@
-import React, { useState } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, X, Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import GoogleCalendarAuth from '../GoogleCalendar/GoogleCalendarAuth';
-import { generatePersonalizedSuggestions, parseEventFromMessage, generateAIResponse } from '../../utils/aiUtils';
+import lettaService from '../../services/lettaService';
+
+// Extend Window interface for webkit speech recognition
+declare global {
+  interface Window {
+    webkitSpeechRecognition: new () => {
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      onresult: (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => void;
+      onerror: () => void;
+      start: () => void;
+    };
+  }
+}
 
 export default function AiSidebar() {
   const { state, dispatch } = useApp();
@@ -11,6 +25,24 @@ export default function AiSidebar() {
   const [isListening, setIsListening] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingMessage, setIsProcessingMessage] = useState(false);
+  const [isLettaConnected, setIsLettaConnected] = useState(false);
+  const [lettaConnectionError, setLettaConnectionError] = useState<string | null>(null);
+
+  // Check Letta agent connection on component mount
+  useEffect(() => {
+    checkLettaConnection();
+  }, []);
+
+  const checkLettaConnection = async () => {
+    try {
+      const isHealthy = await lettaService.healthCheck();
+      setIsLettaConnected(isHealthy);
+      setLettaConnectionError(isHealthy ? null : 'Unable to connect to Letta agent');
+    } catch {
+      setIsLettaConnected(false);
+      setLettaConnectionError('Letta agent connection failed');
+    }
+  };
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,63 +65,55 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      // Try to parse the message as an event creation request
-      const parsedEvent = state.user?.preferences 
-        ? parseEventFromMessage(userMessage, state.user.preferences)
-        : null;
+      // Send message to Letta agent
+      const lettaResponse = await lettaService.sendMessage(userMessage, {
+        events: state.events,
+        preferences: state.user?.preferences,
+        currentDate: new Date(),
+      });
 
-      if (parsedEvent) {
-        // Add the event to the calendar
-        dispatch({ type: 'ADD_EVENT', payload: parsedEvent });
-
-        // Generate success response
-        const successMessage = `🎉 Perfect! I've added "${parsedEvent.title}" to your calendar for ${parsedEvent.date} at ${parsedEvent.startTime}${parsedEvent.isRecurring ? ' as a daily recurring event' : ''}. The timing looks great based on your preferences!`;
-        
-        setTimeout(() => {
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: (Date.now() + 1).toString(),
-              type: 'ai',
-              content: successMessage,
-              timestamp: new Date().toISOString(),
-            },
-          });
-          setIsProcessingMessage(false);
-        }, 1000);
-      } else {
-        // Generate contextual AI response
-        const aiResponse = state.user?.preferences 
-          ? generateAIResponse(userMessage, state.user.preferences, state.events)
-          : "I'd be happy to help you with your schedule! Try asking me to schedule something like 'Add a workout tomorrow at 7am' or 'Schedule a meeting for 2pm today'.";
-
-        setTimeout(() => {
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: (Date.now() + 1).toString(),
-              type: 'ai',
-              content: aiResponse,
-              timestamp: new Date().toISOString(),
-            },
-          });
-          setIsProcessingMessage(false);
-        }, 1000);
+      // If Letta returned a parsed event, add it to the calendar
+      if (lettaResponse.events && lettaResponse.events.length > 0) {
+        lettaResponse.events.forEach(event => {
+          dispatch({ type: 'ADD_EVENT', payload: event });
+        });
       }
-    } catch (error) {
-      console.error('Error processing message:', error);
+
+      // If Letta returned suggestions, add them
+      if (lettaResponse.suggestions && lettaResponse.suggestions.length > 0) {
+        lettaResponse.suggestions.forEach(suggestion => {
+          dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
+        });
+      }
+
+      // Add assistant response
       setTimeout(() => {
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: (Date.now() + 1).toString(),
             type: 'ai',
-            content: "I had trouble processing that request. Could you try rephrasing it? For example: 'Schedule a meeting tomorrow at 2pm' or 'Add workout today at 7am'.",
+            content: lettaResponse.message,
             timestamp: new Date().toISOString(),
           },
         });
         setIsProcessingMessage(false);
-      }, 1000);
+      }, 500);
+
+    } catch (error) {
+      console.error('Error processing message with Letta:', error);
+      setTimeout(() => {
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: (Date.now() + 1).toString(),
+            type: 'ai',
+            content: "I'm having trouble processing that request right now. Please try again or check your connection to the AI assistant.",
+            timestamp: new Date().toISOString(),
+          },
+        });
+        setIsProcessingMessage(false);
+      }, 500);
     }
   };
 
@@ -99,12 +123,12 @@ export default function AiSidebar() {
     setIsListening(!isListening);
     
     if ('webkitSpeechRecognition' in window) {
-      const recognition = new (window as any).webkitSpeechRecognition();
+      const recognition = new window.webkitSpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = 'en-US';
 
-      recognition.onresult = (event: any) => {
+      recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
         setChatInput(transcript);
         setIsListening(false);
@@ -118,7 +142,7 @@ export default function AiSidebar() {
     }
   };
 
-  const handleGenerateNewIdeas = () => {
+  const handleGenerateNewIdeas = async () => {
     if (!state.user?.preferences) return;
 
     setIsGenerating(true);
@@ -128,9 +152,9 @@ export default function AiSidebar() {
       dispatch({ type: 'REMOVE_AI_SUGGESTION', payload: suggestion.id });
     });
 
-    // Generate new personalized suggestions
-    setTimeout(() => {
-      const newSuggestions = generatePersonalizedSuggestions(
+    try {
+      // Generate new suggestions using Letta agent
+      const newSuggestions = await lettaService.generateSuggestions(
         state.events,
         state.user!.preferences,
         new Date()
@@ -152,7 +176,19 @@ export default function AiSidebar() {
       });
 
       setIsGenerating(false);
-    }, 1500);
+    } catch (error) {
+      console.error('Error generating suggestions:', error);
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: "I had trouble generating new suggestions. Please try again later.",
+          timestamp: new Date().toISOString(),
+        },
+      });
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -173,18 +209,51 @@ export default function AiSidebar() {
             <h2 className={`font-semibold ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              AI Assistant
+              Letta Assistant
             </h2>
           </div>
           <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span className={`text-xs ${
-              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-            }`}>
-              Online
-            </span>
+            {isLettaConnected ? (
+              <>
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span className={`text-xs ${
+                  state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  Connected
+                </span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-3 h-3 text-red-400" />
+                <span className={`text-xs ${
+                  state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                }`}>
+                  Disconnected
+                </span>
+              </>
+            )}
           </div>
         </div>
+        
+        {/* Connection Error */}
+        {lettaConnectionError && (
+          <div className={`mt-2 p-2 rounded-md text-xs ${
+            state.isDarkMode 
+              ? 'bg-red-900/30 text-red-400 border border-red-800' 
+              : 'bg-red-50 text-red-600 border border-red-200'
+          }`}>
+            <div className="flex items-center space-x-1">
+              <AlertCircle className="w-3 h-3" />
+              <span>Letta agent offline</span>
+            </div>
+            <button 
+              onClick={checkLettaConnection}
+              className="mt-1 text-xs underline hover:no-underline"
+            >
+              Retry connection
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Chat Messages */}
@@ -194,8 +263,8 @@ export default function AiSidebar() {
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
             <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Start a conversation with your AI assistant</p>
-            <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "Add lunch today at noon"</p>
+            <p className="text-sm">Start a conversation with your Letta assistant</p>
+            <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
           </div>
         )}
         
@@ -235,7 +304,7 @@ export default function AiSidebar() {
                   <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                   <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                 </div>
-                <span className="text-xs opacity-70">AI is thinking...</span>
+                <span className="text-xs opacity-70">Letta is thinking...</span>
               </div>
             </div>
           </div>
@@ -251,33 +320,33 @@ export default function AiSidebar() {
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Schedule a meeting, add workout, etc..."
-            disabled={isProcessingMessage}
+            placeholder={isLettaConnected ? "Ask Letta to manage your calendar..." : "Letta agent is offline"}
+            disabled={isProcessingMessage || !isLettaConnected}
             className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               state.isDarkMode
                 ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                 : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            } ${isProcessingMessage ? 'opacity-50 cursor-not-allowed' : ''}`}
+            } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
           />
           {state.user?.preferences.voiceInput && (
             <button
               type="button"
               onClick={handleVoiceInput}
-              disabled={isProcessingMessage}
+              disabled={isProcessingMessage || !isLettaConnected}
               className={`p-2 rounded-lg transition-colors duration-200 ${
                 isListening
                   ? 'bg-red-500 text-white'
                   : state.isDarkMode
                   ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-              } ${isProcessingMessage ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Mic className="h-4 w-4" />
             </button>
           )}
           <button
             type="submit"
-            disabled={!chatInput.trim() || isProcessingMessage}
+            disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected}
             className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
           >
             <Send className="h-4 w-4" />
@@ -288,7 +357,11 @@ export default function AiSidebar() {
         <div className={`mt-2 text-xs ${
           state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          <p>💡 Try: "Add workout tomorrow 7am", "Schedule meeting today 2pm for 1 hour", "Daily lunch at noon"</p>
+          {isLettaConnected ? (
+            <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
+          ) : (
+            <p>🔌 Connect to Letta agent to start managing your calendar with AI</p>
+          )}
         </div>
       </div>
 
@@ -304,14 +377,14 @@ export default function AiSidebar() {
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              New Ideas
+              Letta Suggestions
             </h3>
           </div>
           <button
             onClick={handleGenerateNewIdeas}
-            disabled={isGenerating || !state.user?.preferences}
+            disabled={isGenerating || !state.user?.preferences || !isLettaConnected}
             className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              isGenerating
+              (isGenerating || !isLettaConnected)
                 ? 'opacity-50 cursor-not-allowed'
                 : state.isDarkMode
                 ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -329,7 +402,11 @@ export default function AiSidebar() {
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">Click "Generate" for personalized suggestions</p>
+              {isLettaConnected ? (
+                <p className="text-xs">Click "Generate" for personalized suggestions from Letta</p>
+              ) : (
+                <p className="text-xs">Connect to Letta agent to get AI suggestions</p>
+              )}
             </div>
           ) : (
             state.aiSuggestions.slice(0, 3).map((suggestion) => (
