@@ -34,6 +34,7 @@ export default function ToastCalendar() {
   const [view, setView] = useState<'month' | 'week' | 'day'>('week');
   const [isLoadingGoogleEvents, setIsLoadingGoogleEvents] = useState(false);
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
+  const [calendarInstance, setCalendarInstance] = useState<any>(null);
   
   // Event management states
   const [eventDialog, setEventDialog] = useState<{
@@ -203,163 +204,82 @@ export default function ToastCalendar() {
     }
   };
 
-  // Create theme configuration that avoids read-only property issues
-  const createThemeConfig = () => {
-    if (!state.isDarkMode) {
-      return {}; // Use default theme for light mode
-    }
-
-    // Create a completely new theme object to avoid read-only issues
-    return {
-      common: {
-        backgroundColor: '#111827',
-        border: '1px solid #374151',
-        gridSelection: {
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          border: '1px solid #3B82F6',
-        },
+  // Basic calendar options without theme conflicts
+  const calendarOptions = {
+    defaultView: view,
+    useCreationPopup: false,
+    useDetailPopup: false,
+    isReadOnly: false,
+    usageStatistics: false,
+    week: {
+      startDayOfWeek: 0,
+      dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      hourStart: 6,
+      hourEnd: 23,
+      eventView: ['time'],
+      taskView: false,
+      collapseDuplicateEvents: false,
+    },
+    month: {
+      dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      visibleWeeksCount: 6,
+      workweek: false,
+    },
+    calendars: [
+      {
+        id: 'study',
+        name: 'Study',
+        backgroundColor: '#3B82F6',
+        borderColor: '#3B82F6',
+        dragBackgroundColor: '#3B82F6',
       },
-      week: {
-        dayGridLeft: {
-          backgroundColor: '#1F2937',
-          borderRight: '1px solid #374151',
-        },
-        timeGridLeft: {
-          backgroundColor: '#1F2937',
-          borderRight: '1px solid #374151',
-        },
-        timeGridLeftAdditionalTimezone: {
-          backgroundColor: '#374151',
-        },
-        timeGridHalfHourLine: {
-          borderBottom: '1px dotted #4B5563',
-        },
-        timeGridHourLine: {
-          borderBottom: '1px solid #374151',
-        },
-        nowIndicatorLabel: {
-          color: '#3B82F6',
-        },
-        nowIndicatorPast: {
-          border: '1px dashed #3B82F6',
-        },
-        nowIndicatorBullet: {
-          backgroundColor: '#3B82F6',
-        },
-        nowIndicatorToday: {
-          border: '1px solid #3B82F6',
-        },
-        pastTime: {
-          color: '#6B7280',
-        },
-        futureTime: {
-          color: '#D1D5DB',
-        },
-        weekend: {
-          backgroundColor: '#1F2937',
-        },
+      {
+        id: 'work',
+        name: 'Work',
+        backgroundColor: '#10B981',
+        borderColor: '#10B981',
+        dragBackgroundColor: '#10B981',
       },
-      month: {
-        dayExceptThisMonth: {
-          color: '#4B5563',
-        },
-        holidayExceptThisMonth: {
-          color: '#4B5563',
-        },
-        weekend: {
-          backgroundColor: '#1F2937',
-        },
+      {
+        id: 'personal',
+        name: 'Personal',
+        backgroundColor: '#F59E0B',
+        borderColor: '#F59E0B',
+        dragBackgroundColor: '#F59E0B',
       },
-    };
-  };
-
-  // Calendar options with proper theme handling
-  const getCalendarOptions = () => {
-    const baseOptions = {
-      defaultView: view,
-      useCreationPopup: false,
-      useDetailPopup: false,
-      isReadOnly: false,
-      usageStatistics: false,
-      week: {
-        startDayOfWeek: 0,
-        dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        hourStart: 6,
-        hourEnd: 23,
-        eventView: ['time'],
-        taskView: false,
-        collapseDuplicateEvents: false,
+      {
+        id: 'health',
+        name: 'Health',
+        backgroundColor: '#EF4444',
+        borderColor: '#EF4444',
+        dragBackgroundColor: '#EF4444',
       },
-      month: {
-        dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        visibleWeeksCount: 6,
-        workweek: false,
+      {
+        id: 'social',
+        name: 'Social',
+        backgroundColor: '#8B5CF6',
+        borderColor: '#8B5CF6',
+        dragBackgroundColor: '#8B5CF6',
       },
-      calendars: [
-        {
-          id: 'study',
-          name: 'Study',
-          backgroundColor: '#3B82F6',
-          borderColor: '#3B82F6',
-          dragBackgroundColor: '#3B82F6',
-        },
-        {
-          id: 'work',
-          name: 'Work',
-          backgroundColor: '#10B981',
-          borderColor: '#10B981',
-          dragBackgroundColor: '#10B981',
-        },
-        {
-          id: 'personal',
-          name: 'Personal',
-          backgroundColor: '#F59E0B',
-          borderColor: '#F59E0B',
-          dragBackgroundColor: '#F59E0B',
-        },
-        {
-          id: 'health',
-          name: 'Health',
-          backgroundColor: '#EF4444',
-          borderColor: '#EF4444',
-          dragBackgroundColor: '#EF4444',
-        },
-        {
-          id: 'social',
-          name: 'Social',
-          backgroundColor: '#8B5CF6',
-          borderColor: '#8B5CF6',
-          dragBackgroundColor: '#8B5CF6',
-        },
-        {
-          id: 'meal',
-          name: 'Meal',
-          backgroundColor: '#EC4899',
-          borderColor: '#EC4899',
-          dragBackgroundColor: '#EC4899',
-        },
-        {
-          id: 'imported',
-          name: 'Google Calendar',
-          backgroundColor: '#6B7280',
-          borderColor: '#6B7280',
-          dragBackgroundColor: '#6B7280',
-        },
-      ],
-    };
-
-    // Only add theme if in dark mode
-    const themeConfig = createThemeConfig();
-    if (Object.keys(themeConfig).length > 0) {
-      return { ...baseOptions, theme: themeConfig };
-    }
-
-    return baseOptions;
+      {
+        id: 'meal',
+        name: 'Meal',
+        backgroundColor: '#EC4899',
+        borderColor: '#EC4899',
+        dragBackgroundColor: '#EC4899',
+      },
+      {
+        id: 'imported',
+        name: 'Google Calendar',
+        backgroundColor: '#6B7280',
+        borderColor: '#6B7280',
+        dragBackgroundColor: '#6B7280',
+      },
+    ],
   };
 
   // Event handlers
   const onBeforeCreateEvent = (eventData: any) => {
-    // Open our custom dialog instead of using the default popup
     const startDate = new Date(eventData.start);
     setEventDialog({
       isOpen: true,
@@ -374,13 +294,11 @@ export default function ToastCalendar() {
     const { event, changes } = updateData;
     const updatedEvent = convertFromToastEvent({ ...event, ...changes });
     
-    // Save to history for undo/redo
     const updatedEvents = state.events.map(e => 
       e.id === updatedEvent.id ? updatedEvent : e
     );
     setEventsHistory(updatedEvents);
 
-    // If it's a Google Calendar event, sync the changes back to Google Calendar
     if (event.id.startsWith('google_')) {
       try {
         const success = await googleCalendarService.updateEvent(updatedEvent);
@@ -396,9 +314,7 @@ export default function ToastCalendar() {
             },
           });
         } else {
-          // Revert local changes if Google Calendar update failed
           undo();
-          
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
@@ -437,11 +353,9 @@ export default function ToastCalendar() {
   };
 
   const onBeforeDeleteEvent = async (eventData: any) => {
-    // Save to history for undo/redo
     const updatedEvents = state.events.filter(e => e.id !== eventData.id);
     setEventsHistory(updatedEvents);
 
-    // If it's a Google Calendar event, delete from Google Calendar too
     if (eventData.id.startsWith('google_')) {
       try {
         const success = await googleCalendarService.deleteEvent(eventData.id);
@@ -457,9 +371,7 @@ export default function ToastCalendar() {
             },
           });
         } else {
-          // Revert deletion if Google Calendar deletion failed
           undo();
-          
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
@@ -522,15 +434,14 @@ export default function ToastCalendar() {
   // Navigation handlers
   const handleViewChange = (newView: 'month' | 'week' | 'day') => {
     setView(newView);
-    if (calendarRef.current) {
-      calendarRef.current.getInstance().changeView(newView);
+    if (calendarInstance) {
+      calendarInstance.changeView(newView);
       loadGoogleCalendarEvents(currentCalendarDate);
     }
   };
 
   const handleNavigation = (direction: 'prev' | 'next' | 'today') => {
-    if (calendarRef.current) {
-      const calendarInstance = calendarRef.current.getInstance();
+    if (calendarInstance) {
       switch (direction) {
         case 'prev':
           calendarInstance.prev();
@@ -571,7 +482,6 @@ export default function ToastCalendar() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle shortcuts when no dialog is open
       if (eventDialog.isOpen || quickCreator.isOpen || contextMenu.isOpen) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -590,45 +500,33 @@ export default function ToastCalendar() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [eventDialog.isOpen, quickCreator.isOpen, contextMenu.isOpen, undo, redo]);
 
-  // Load Google Calendar events when component mounts or authentication changes
+  // Initialize calendar instance
   useEffect(() => {
-    if (googleCalendarService.isAuthenticated()) {
-      loadGoogleCalendarEvents(currentCalendarDate);
+    if (calendarRef.current) {
+      const instance = calendarRef.current.getInstance();
+      setCalendarInstance(instance);
     }
-  }, [view]);
+  }, []);
 
   // Update calendar when events change
   useEffect(() => {
-    if (calendarRef.current) {
-      const calendarInstance = calendarRef.current.getInstance();
-      const toastEvents = convertToToastEvents(state.events);
-      calendarInstance.clear();
-      calendarInstance.createEvents(toastEvents);
-    }
-  }, [state.events]);
-
-  // Update theme when dark mode changes
-  useEffect(() => {
-    if (calendarRef.current) {
-      const calendarInstance = calendarRef.current.getInstance();
-      const themeConfig = createThemeConfig();
-      if (Object.keys(themeConfig).length > 0) {
-        calendarInstance.setTheme(themeConfig);
-      } else {
-        // Reset to default theme for light mode
-        calendarInstance.setTheme({});
+    if (calendarInstance) {
+      try {
+        const toastEvents = convertToToastEvents(state.events);
+        calendarInstance.clear();
+        calendarInstance.createEvents(toastEvents);
+      } catch (error) {
+        console.error('Error updating calendar events:', error);
       }
     }
-  }, [state.isDarkMode]);
+  }, [state.events, calendarInstance]);
 
   // Load initial Google Calendar events
   useEffect(() => {
     if (googleCalendarService.isAuthenticated()) {
       loadGoogleCalendarEvents(currentCalendarDate);
     }
-  }, []);
-
-  const calendarOptions = getCalendarOptions();
+  }, [view]);
 
   return (
     <div className={`flex-1 flex flex-col h-full ${
@@ -805,7 +703,6 @@ export default function ToastCalendar() {
             view={view}
             events={convertToToastEvents(state.events)}
             calendars={calendarOptions.calendars}
-            theme={calendarOptions.theme}
             week={calendarOptions.week}
             month={calendarOptions.month}
             useCreationPopup={calendarOptions.useCreationPopup}
