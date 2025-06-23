@@ -33,7 +33,8 @@ export default function Header() {
     // Get AI-suggested events (events created by AI assistant)
     const aiEvents = state.events.filter(event => 
       event.id.startsWith('ai_event_') || 
-      event.description?.includes('Created by AI assistant')
+      event.description?.includes('Created by AI assistant') ||
+      event.description?.includes('Suggested by AI')
     );
 
     // Clear all stored data except potentially AI events
@@ -181,7 +182,8 @@ export default function Header() {
   const isGoogleCalendarConnected = oauthService.isAuthenticated();
   const aiEventCount = state.events.filter(event => 
     event.id.startsWith('ai_event_') || 
-    event.description?.includes('Created by AI assistant')
+    event.description?.includes('Created by AI assistant') ||
+    event.description?.includes('Suggested by AI')
   ).length;
 
   return (
@@ -285,26 +287,6 @@ export default function Header() {
                       </p>
                     </div>
 
-                    {/* Refresh AI Suggestions */}
-                    <button
-                      onClick={refreshAiSuggestions}
-                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
-                        state.isDarkMode 
-                          ? 'text-purple-400 hover:bg-gray-700' 
-                          : 'text-purple-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <Sparkles className="h-4 w-4" />
-                      <div>
-                        <div className="font-medium">Refresh AI Suggestions</div>
-                        <div className={`text-xs ${
-                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
-                        }`}>
-                          Generate new suggestions based on current preferences
-                        </div>
-                      </div>
-                    </button>
-
                     {/* Reset Preferences */}
                     <button
                       onClick={resetOnboarding}
@@ -321,6 +303,26 @@ export default function Header() {
                           state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
                         }`}>
                           Restart onboarding with event management options
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Refresh AI Suggestions */}
+                    <button
+                      onClick={refreshAiSuggestions}
+                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
+                        state.isDarkMode 
+                          ? 'text-purple-400 hover:bg-gray-700' 
+                          : 'text-purple-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      <div>
+                        <div className="font-medium">Refresh AI Suggestions</div>
+                        <div className={`text-xs ${
+                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
+                        }`}>
+                          Generate new suggestions based on current preferences
                         </div>
                       </div>
                     </button>
