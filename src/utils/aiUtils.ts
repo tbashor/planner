@@ -291,6 +291,29 @@ export function generatePersonalizedSuggestions(
     }
   }
 
+  // Add preference-adaptive suggestions
+  if (preferences.aiSuggestions) {
+    // Suggest time blocks based on productivity patterns
+    const completedEvents = events.filter(e => e.isCompleted);
+    if (completedEvents.length > 5) {
+      const patterns = analyzeProductivityPatterns(events);
+      if (patterns.mostProductiveHours.length > 0) {
+        suggestions.push({
+          id: `productivity-insight-${Date.now()}`,
+          type: 'optimize',
+          title: 'Productivity Pattern Insight',
+          description: `Your most productive hours are ${patterns.mostProductiveHours.join(', ')}. Consider scheduling important tasks during these times.`,
+          action: JSON.stringify({
+            type: 'productivity_insight',
+            data: patterns
+          }),
+          priority: 2,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
   return suggestions.slice(0, 4); // Limit to 4 suggestions
 }
 

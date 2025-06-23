@@ -4,6 +4,7 @@ import MainLayout from './components/Layout/MainLayout';
 import OAuthCallback from './components/GoogleCalendar/OAuthCallback';
 import OnboardingWizard from './components/Onboarding/OnboardingWizard';
 import { mockEvents, mockAiSuggestions } from './data/mockData';
+import { generatePersonalizedSuggestions } from './utils/aiUtils';
 
 interface OnboardingData {
   name: string;
@@ -23,27 +24,75 @@ function AppContent() {
                          window.location.search.includes('code=');
 
   useEffect(() => {
+    // Check for preserved AI events from reset
+    const preservedAiEvents = localStorage.getItem('smartplan_preserved_ai_events');
+    
     // Only initialize mock data if not handling OAuth callback and onboarding is complete
     // and we don't already have events loaded
     if (!isOAuthCallback && state.isOnboardingComplete && state.events.length === 0) {
-      // Initialize with mock data only if no events are stored
-      dispatch({ type: 'SET_EVENTS', payload: mockEvents });
+      let eventsToLoad = [...mockEvents];
       
-      // Add initial AI suggestions
-      mockAiSuggestions.forEach(suggestion => {
-        dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
-      });
+      // If we have preserved AI events, add them
+      if (preservedAiEvents) {
+        try {
+          const aiEvents = JSON.parse(preservedAiEvents);
+          eventsToLoad = [...eventsToLoad, ...aiEvents];
+          
+          // Clear the preserved events from localStorage
+          localStorage.removeItem('smartplan_preserved_ai_events');
+          
+          // Add message about restored AI events
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `🎉 Welcome back! I've restored your ${aiEvents.length} AI-suggested events and I'm now adapting my suggestions to your updated preferences. Your schedule continuity is maintained!`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          console.error('Error parsing preserved AI events:', error);
+        }
+      }
+      
+      // Initialize with events (mock + potentially preserved AI events)
+      dispatch({ type: 'SET_EVENTS', payload: eventsToLoad });
+      
+      // Generate AI suggestions based on current preferences
+      if (state.user?.preferences) {
+        const newSuggestions = generatePersonalizedSuggestions(
+          eventsToLoad,
+          state.user.preferences,
+          new Date()
+        );
+        
+        newSuggestions.forEach(suggestion => {
+          dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
+        });
+      } else {
+        // Fallback to mock suggestions if no preferences yet
+        mockAiSuggestions.forEach(suggestion => {
+          dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
+        });
+      }
     }
 
     // Add welcome message only if no chat messages exist and onboarding is complete
     if (!isOAuthCallback && state.isOnboardingComplete && state.chatMessages.length === 0) {
       const userName = state.user?.name || 'there';
+      const hasPreservedEvents = preservedAiEvents !== null;
+      
+      const welcomeMessage = hasPreservedEvents 
+        ? `👋 Welcome back ${userName}! I've successfully restored your AI-suggested events and updated my recommendations based on your new preferences. Ready to optimize your schedule?`
+        : `👋 Welcome back ${userName}! I'm your AI assistant. Based on your preferences, I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`;
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: 'welcome',
           type: 'ai',
-          content: `👋 Welcome back ${userName}! I'm your AI assistant. Based on your preferences, I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`,
+          content: welcomeMessage,
           timestamp: new Date().toISOString(),
         },
       });
