@@ -20,6 +20,7 @@ class LettaService {
   private client: LettaClient;
   private conversationHistory: LettaMessage[] = [];
   private currentAgentId: string | null = null;
+  private requestCounter = 0;
 
   constructor(config: LettaConfig) {
     this.config = config;
@@ -39,16 +40,84 @@ class LettaService {
     console.log('- Project Slug:', config.projectSlug);
     console.log('- Template:', config.templateName);
     console.log('- Agent ID:', config.agentId || 'Will be created');
-    console.log('- API Key:', config.apiKey ? 'Configured' : 'Not configured');
+    console.log('- API Key:', config.apiKey ? 'Configured ✅' : 'Not configured ❌');
+    
+    if (!config.apiKey) {
+      console.warn('⚠️ WARNING: No API key configured. Letta functionality will be limited.');
+    }
+  }
+
+  /**
+   * Log request details for debugging
+   */
+  private logRequest(operation: string, details: any = {}) {
+    this.requestCounter++;
+    const requestId = `REQ-${this.requestCounter}`;
+    
+    console.group(`🔄 [${requestId}] Letta ${operation}`);
+    console.log('📤 Request Details:');
+    console.log('- Timestamp:', new Date().toISOString());
+    console.log('- Operation:', operation);
+    console.log('- Agent ID:', this.currentAgentId || 'Not set');
+    
+    if (Object.keys(details).length > 0) {
+      console.log('- Additional Details:', details);
+    }
+    
+    return requestId;
+  }
+
+  /**
+   * Log response details for debugging
+   */
+  private logResponse(requestId: string, operation: string, success: boolean, data: any = {}, error?: any) {
+    const status = success ? '✅ SUCCESS' : '❌ FAILED';
+    const duration = performance.now();
+    
+    console.log(`📥 [${requestId}] Response: ${status}`);
+    console.log('- Duration: ~' + Math.round(duration) + 'ms');
+    
+    if (success) {
+      console.log('- Response Data:', data);
+    } else {
+      console.error('- Error:', error);
+      console.error('- Error Type:', error?.constructor?.name || 'Unknown');
+      console.error('- Error Message:', error?.message || 'No message');
+    }
+    
+    console.groupEnd();
+  }
+
+  /**
+   * Log conversation flow
+   */
+  private logConversation(type: 'send' | 'receive', message: string, context?: any) {
+    const emoji = type === 'send' ? '💬' : '🤖';
+    const direction = type === 'send' ? 'TO' : 'FROM';
+    
+    console.group(`${emoji} Message ${direction} Letta`);
+    console.log('- Content:', message.substring(0, 200) + (message.length > 200 ? '...' : ''));
+    console.log('- Full Length:', message.length, 'characters');
+    console.log('- Timestamp:', new Date().toISOString());
+    
+    if (context) {
+      console.log('- Context:', context);
+    }
+    
+    console.groupEnd();
   }
 
   updateConfig(config: Partial<LettaConfig>) {
+    console.log('🔧 Updating Letta configuration:', config);
+    
     this.config = { ...this.config, ...config };
     // Reinitialize client with new config
     this.client = new LettaClient({
       baseUrl: this.config.baseUrl,
       token: this.config.apiKey,
     });
+    
+    console.log('✅ Letta configuration updated successfully');
   }
 
   /**
@@ -56,37 +125,67 @@ class LettaService {
    */
   private async getOrCreateAgent(): Promise<string> {
     if (this.currentAgentId) {
+      console.log('🔄 Using cached agent ID:', this.currentAgentId);
       return this.currentAgentId;
     }
 
     // If we have a specific agent ID, use it
     if (this.config.agentId) {
+      const requestId = this.logRequest('Agent Retrieval', { agentId: this.config.agentId });
+      
       try {
-        await this.client.agents.retrieve(this.config.agentId);
+        const startTime = performance.now();
+        const agent = await this.client.agents.retrieve(this.config.agentId);
+        const endTime = performance.now();
+        
         this.currentAgentId = this.config.agentId;
+        
+        this.logResponse(requestId, 'Agent Retrieval', true, {
+          agentId: agent.id,
+          agentName: agent.name,
+          duration: Math.round(endTime - startTime) + 'ms'
+        });
+        
         console.log('✅ Using existing agent:', this.config.agentId);
         return this.currentAgentId;
       } catch (error) {
+        this.logResponse(requestId, 'Agent Retrieval', false, {}, error);
         console.warn('⚠️ Specified agent not found, creating new one:', error);
       }
     }
 
     // Create a new agent from template
+    const requestId = this.logRequest('Agent Creation', { 
+      templateName: this.config.templateName,
+      projectSlug: this.config.projectSlug 
+    });
+    
     try {
       console.log('🔄 Creating new agent from template:', this.config.templateName);
+      
+      const startTime = performance.now();
       const response = await this.client.agents.create({
         name: `Calendar Assistant - ${Date.now()}`,
         description: 'AI assistant for calendar management and scheduling',
       });
+      const endTime = performance.now();
 
       if (response && response.id) {
         this.currentAgentId = response.id;
+        
+        this.logResponse(requestId, 'Agent Creation', true, {
+          agentId: response.id,
+          agentName: response.name,
+          duration: Math.round(endTime - startTime) + 'ms'
+        });
+        
         console.log('✅ Created new agent:', this.currentAgentId);
         return this.currentAgentId;
       } else {
         throw new Error('No agent ID returned from agent creation');
       }
     } catch (error) {
+      this.logResponse(requestId, 'Agent Creation', false, {}, error);
       console.error('❌ Failed to create agent:', error);
       throw new Error(`Failed to create agent: ${error}`);
     }
@@ -100,9 +199,22 @@ class LettaService {
       currentDate?: Date;
     }
   ): Promise<LettaResponse> {
+    const requestId = this.logRequest('Send Message', {
+      messageLength: message.length,
+      hasContext: !!context,
+      contextEvents: context?.events?.length || 0,
+      hasPreferences: !!context?.preferences
+    });
+
     try {
       // Ensure we have an agent
       const agentId = await this.getOrCreateAgent();
+
+      // Log the outgoing message
+      this.logConversation('send', message, {
+        agentId,
+        contextProvided: !!context
+      });
 
       // Add user message to conversation history
       const userMessage: LettaMessage = {
@@ -129,12 +241,31 @@ class LettaService {
           role: 'system',
           content: contextInfo,
         });
+        
+        console.log('📋 Context added to message:', {
+          contextLength: contextInfo.length,
+          contextPreview: contextInfo.substring(0, 100) + '...'
+        });
       }
 
+      console.log('📤 Sending message to Letta agent:', {
+        agentId,
+        messageCount: messages.length,
+        totalCharacters: messages.reduce((sum, msg) => sum + msg.content.length, 0)
+      });
+
       // Send message to Letta agent using the SDK
+      const startTime = performance.now();
       const response = await this.client.agents.messages.create(agentId, {
         messages: messages,
         maxSteps: 5,
+      });
+      const endTime = performance.now();
+
+      console.log('📥 Received response from Letta:', {
+        responseTime: Math.round(endTime - startTime) + 'ms',
+        messageCount: response.messages?.length || 0,
+        responseId: response.id || 'No ID'
       });
 
       // Extract the assistant's message from the response
@@ -162,6 +293,12 @@ class LettaService {
         }
       }
 
+      // Log the incoming message
+      this.logConversation('receive', responseMessage, {
+        assistantMessageCount: assistantMessages.length,
+        totalResponseMessages: response.messages?.length || 0
+      });
+
       // Process the response and try to extract structured data
       const lettaResponse = this.processLettaResponse(responseMessage);
 
@@ -173,9 +310,17 @@ class LettaService {
       };
       this.conversationHistory.push(assistantMessage);
 
+      this.logResponse(requestId, 'Send Message', true, {
+        responseLength: lettaResponse.message.length,
+        suggestionsCount: lettaResponse.suggestions?.length || 0,
+        eventsCount: lettaResponse.events?.length || 0,
+        conversationLength: this.conversationHistory.length
+      });
+
       return lettaResponse;
     } catch (error) {
-      console.error('Error communicating with Letta agent:', error);
+      this.logResponse(requestId, 'Send Message', false, {}, error);
+      console.error('❌ Error communicating with Letta agent:', error);
       
       // Return a fallback response
       return {
@@ -218,10 +363,26 @@ class LettaService {
       }
     }
 
-    return parts.length > 0 ? parts.join('\n') : null;
+    const contextMessage = parts.length > 0 ? parts.join('\n') : null;
+    
+    if (contextMessage) {
+      console.log('📋 Built context message:', {
+        parts: parts.length,
+        totalLength: contextMessage.length,
+        hasEvents: !!(context?.events?.length),
+        hasPreferences: !!context?.preferences
+      });
+    }
+
+    return contextMessage;
   }
 
   private processLettaResponse(response: string): LettaResponse {
+    console.log('🔄 Processing Letta response:', {
+      responseLength: response.length,
+      responsePreview: response.substring(0, 150) + (response.length > 150 ? '...' : '')
+    });
+
     // For now, return the response as-is
     // In the future, you could parse the response for structured data like events or suggestions
     return {
@@ -237,6 +398,12 @@ class LettaService {
     preferences: UserPreferences,
     currentDate: Date
   ): Promise<AiSuggestion[]> {
+    const requestId = this.logRequest('Generate Suggestions', {
+      eventsCount: events.length,
+      focusAreas: preferences.focusAreas?.length || 0,
+      currentDate: currentDate.toISOString().split('T')[0]
+    });
+
     try {
       const agentId = await this.getOrCreateAgent();
 
@@ -248,6 +415,12 @@ class LettaService {
 
 Return suggestions for productive activities, breaks, or schedule optimizations.`;
 
+      console.log('📤 Generating suggestions with context:', {
+        contextLength: contextMessage.length,
+        agentId
+      });
+
+      const startTime = performance.now();
       await this.client.agents.messages.create(agentId, {
         messages: [
           {
@@ -257,11 +430,18 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
         ],
         maxSteps: 3,
       });
+      const endTime = performance.now();
+
+      this.logResponse(requestId, 'Generate Suggestions', true, {
+        duration: Math.round(endTime - startTime) + 'ms',
+        suggestionsGenerated: 0 // Will be updated when parsing is implemented
+      });
 
       // For now, return empty array - you could parse the response for structured suggestions
       return [];
     } catch (error) {
-      console.error('Error generating suggestions from Letta agent:', error);
+      this.logResponse(requestId, 'Generate Suggestions', false, {}, error);
+      console.error('❌ Error generating suggestions from Letta agent:', error);
       return [];
     }
   }
@@ -270,6 +450,11 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
     message: string,
     preferences: UserPreferences
   ): Promise<Event | null> {
+    const requestId = this.logRequest('Parse Event', {
+      messageLength: message.length,
+      hasPreferences: !!preferences
+    });
+
     try {
       const agentId = await this.getOrCreateAgent();
 
@@ -281,6 +466,12 @@ User preferences:
 If this is a request to create an event, extract the title, date, start time, end time, and category.
 Respond with event details if found, or "NO_EVENT" if this is not an event creation request.`;
 
+      console.log('📤 Parsing event from message:', {
+        originalMessage: message,
+        promptLength: parsePrompt.length
+      });
+
+      const startTime = performance.now();
       await this.client.agents.messages.create(agentId, {
         messages: [
           {
@@ -290,66 +481,147 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
         ],
         maxSteps: 2,
       });
+      const endTime = performance.now();
+
+      this.logResponse(requestId, 'Parse Event', true, {
+        duration: Math.round(endTime - startTime) + 'ms',
+        eventParsed: false // Will be updated when parsing is implemented
+      });
 
       // For now, return null - you could parse the response for event data
       return null;
     } catch (error) {
-      console.error('Error parsing event from Letta agent:', error);
+      this.logResponse(requestId, 'Parse Event', false, {}, error);
+      console.error('❌ Error parsing event from Letta agent:', error);
       return null;
     }
   }
 
   // Get conversation history
   getConversationHistory(): LettaMessage[] {
+    console.log('📚 Retrieving conversation history:', {
+      messageCount: this.conversationHistory.length,
+      totalCharacters: this.conversationHistory.reduce((sum, msg) => sum + msg.content.length, 0)
+    });
     return [...this.conversationHistory];
   }
 
   // Clear conversation history
   clearHistory(): void {
+    const previousCount = this.conversationHistory.length;
     this.conversationHistory = [];
+    console.log('🧹 Cleared conversation history:', {
+      previousMessageCount: previousCount,
+      currentMessageCount: 0
+    });
   }
 
   // Health check using SDK
   async healthCheck(): Promise<boolean> {
+    const requestId = this.logRequest('Health Check', {
+      hasApiKey: !!this.config.apiKey,
+      baseUrl: this.config.baseUrl
+    });
+
     try {
       if (!this.config.apiKey) {
         console.warn('⚠️ No API key configured for Letta');
+        this.logResponse(requestId, 'Health Check', false, {}, new Error('No API key configured'));
         return false;
       }
 
+      console.log('🏥 Performing Letta health check...');
+      
       // Try to get or create an agent as a health check
+      const startTime = performance.now();
       const agentId = await this.getOrCreateAgent();
-      return !!agentId;
+      const endTime = performance.now();
+      
+      const isHealthy = !!agentId;
+      
+      this.logResponse(requestId, 'Health Check', isHealthy, {
+        agentId,
+        duration: Math.round(endTime - startTime) + 'ms',
+        connectionStatus: isHealthy ? 'Connected' : 'Failed'
+      });
+
+      return isHealthy;
     } catch (error) {
-      console.error('Letta agent health check failed:', error);
+      this.logResponse(requestId, 'Health Check', false, {}, error);
+      console.error('❌ Letta agent health check failed:', error);
       return false;
     }
   }
 
   // Get agent info
   async getAgentInfo() {
+    const requestId = this.logRequest('Get Agent Info');
+
     try {
       const agentId = await this.getOrCreateAgent();
-      return await this.client.agents.retrieve(agentId);
+      
+      const startTime = performance.now();
+      const agentInfo = await this.client.agents.retrieve(agentId);
+      const endTime = performance.now();
+      
+      this.logResponse(requestId, 'Get Agent Info', true, {
+        agentId: agentInfo.id,
+        agentName: agentInfo.name,
+        duration: Math.round(endTime - startTime) + 'ms'
+      });
+
+      return agentInfo;
     } catch (error) {
-      console.error('Error getting agent info:', error);
+      this.logResponse(requestId, 'Get Agent Info', false, {}, error);
+      console.error('❌ Error getting agent info:', error);
       return null;
     }
   }
 
   // List available agents
   async listAgents() {
+    const requestId = this.logRequest('List Agents');
+
     try {
-      return await this.client.agents.list();
+      const startTime = performance.now();
+      const agents = await this.client.agents.list();
+      const endTime = performance.now();
+      
+      this.logResponse(requestId, 'List Agents', true, {
+        agentCount: agents.length,
+        duration: Math.round(endTime - startTime) + 'ms'
+      });
+
+      return agents;
     } catch (error) {
-      console.error('Error listing agents:', error);
+      this.logResponse(requestId, 'List Agents', false, {}, error);
+      console.error('❌ Error listing agents:', error);
       return [];
     }
   }
 
   // Get current agent ID
   getCurrentAgentId(): string | null {
+    console.log('🆔 Current agent ID:', this.currentAgentId || 'Not set');
     return this.currentAgentId;
+  }
+
+  // Get service statistics
+  getServiceStats() {
+    const stats = {
+      requestCount: this.requestCounter,
+      conversationLength: this.conversationHistory.length,
+      currentAgentId: this.currentAgentId,
+      configurationStatus: {
+        hasApiKey: !!this.config.apiKey,
+        baseUrl: this.config.baseUrl,
+        projectSlug: this.config.projectSlug,
+        templateName: this.config.templateName
+      }
+    };
+
+    console.log('📊 Letta Service Statistics:', stats);
+    return stats;
   }
 }
 
