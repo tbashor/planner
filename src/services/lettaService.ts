@@ -1,5 +1,5 @@
 import { Event, UserPreferences, AiSuggestion } from '../types';
-import { defaultLettaConfig, LettaConfig } from '../config/lettaConfig';
+import { defaultLettaConfig, LettaConfig, debugEnvironmentVariables } from '../config/lettaConfig';
 import { LettaClient, Letta } from '@letta-ai/letta-client';
 
 export interface LettaMessage {
@@ -22,10 +22,21 @@ class LettaService {
 
   constructor(config: LettaConfig) {
     this.config = config;
+    
+    // Debug environment variables in development
+    if (import.meta.env.DEV) {
+      debugEnvironmentVariables();
+    }
+    
     this.client = new LettaClient({
       baseUrl: config.baseUrl,
       token: config.apiKey,
     });
+    
+    console.log('🤖 Letta Service initialized:');
+    console.log('- Base URL:', config.baseUrl);
+    console.log('- Agent ID:', config.agentId);
+    console.log('- API Key:', config.apiKey ? 'Configured' : 'Not configured');
   }
 
   updateConfig(config: Partial<LettaConfig>) {
@@ -282,4 +293,4 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
 // Create and export the service instance with default configuration
 export const lettaService = new LettaService(defaultLettaConfig);
 
-export default lettaService; 
+export default lettaService;

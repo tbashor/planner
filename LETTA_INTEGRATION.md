@@ -6,15 +6,32 @@ This calendar app now integrates with your Letta agent for intelligent calendar 
 
 ### 1. Environment Configuration
 
+**IMPORTANT**: This project uses Vite, so environment variables must be prefixed with `VITE_` (not `REACT_APP_`).
+
 Create a `.env` file in your project root:
 
 ```env
-REACT_APP_LETTA_BASE_URL=http://localhost:8000
-REACT_APP_LETTA_AGENT_ID=your-agent-id-here
-REACT_APP_LETTA_API_KEY=your-api-key-here
+VITE_LETTA_BASE_URL=http://localhost:8000
+VITE_LETTA_AGENT_ID=your-agent-id-here
+VITE_LETTA_API_KEY=your-api-key-here
 ```
 
-### 2. Configuration Options
+### 2. Environment Variable Requirements
+
+#### Vite vs Create React App
+- **Vite** (this project): Use `VITE_` prefix
+- **Create React App**: Uses `REACT_APP_` prefix
+
+This project supports both for compatibility:
+- Primary: `VITE_LETTA_*` variables
+- Fallback: `REACT_APP_LETTA_*` variables
+
+#### Required Variables
+- `VITE_LETTA_BASE_URL`: Your Letta server URL (default: http://localhost:8000)
+- `VITE_LETTA_AGENT_ID`: Your specific agent ID (required)
+- `VITE_LETTA_API_KEY`: Optional API key for authentication
+
+### 3. Configuration Options
 
 You can also configure the Letta connection programmatically by modifying `src/config/lettaConfig.ts`:
 
@@ -25,6 +42,14 @@ export const defaultLettaConfig: LettaConfig = {
   apiKey: 'your-api-key', // Optional
 };
 ```
+
+### 4. Debugging Environment Variables
+
+The app includes debugging tools to help you verify your environment variables are loaded correctly:
+
+1. Open browser developer tools
+2. Look for console messages starting with "🔧 Letta Configuration Debug"
+3. Check if your variables are being detected
 
 ## Features
 
@@ -116,34 +141,22 @@ The integration includes comprehensive error handling:
 - **API errors**: Logged to console with fallback responses
 - **Type safety**: Full TypeScript support with proper error types
 
-## Extending the Integration
-
-### Custom Message Processing
-
-Modify `processLettaResponse()` in `lettaService.ts` to parse structured responses:
-
-```typescript
-private processLettaResponse(response: string): LettaResponse {
-  // Parse response for events, suggestions, etc.
-  // Return structured data for the calendar app
-}
-```
-
-### Additional Agent Methods
-
-Add new methods to `LettaService` for specific agent capabilities:
-
-```typescript
-async customAgentMethod(params: any) {
-  const response = await this.client.agents.messages.create(
-    this.config.agentId,
-    { messages: [{ role: 'user', content: 'custom prompt' }] }
-  );
-  // Process response
-}
-```
-
 ## Troubleshooting
+
+### Environment Variables Not Loading
+
+1. **Check the prefix**: Use `VITE_` not `REACT_APP_`
+2. **Restart the dev server**: Environment variables are loaded at startup
+3. **Check the .env file location**: Must be in project root
+4. **Verify syntax**: No spaces around the `=` sign
+
+```env
+# ✅ Correct
+VITE_LETTA_BASE_URL=http://localhost:8000
+
+# ❌ Incorrect
+VITE_LETTA_BASE_URL = http://localhost:8000
+```
 
 ### Connection Issues
 1. Check that your Letta server is running
@@ -158,7 +171,7 @@ async customAgentMethod(params: any) {
 
 ### UI Issues
 1. Check browser console for JavaScript errors
-2. Verify environment variables are loaded
+2. Verify environment variables are loaded (see debugging section)
 3. Test the health check endpoint manually
 
 ## Next Steps
@@ -176,4 +189,5 @@ To further enhance the integration:
 For issues with:
 - **Letta SDK**: Check the [official Letta documentation](https://docs.letta.ai)
 - **Integration**: Review the code in `src/services/lettaService.ts`
-- **Configuration**: Check `src/config/lettaConfig.ts` 
+- **Configuration**: Check `src/config/lettaConfig.ts`
+- **Environment Variables**: Use the debugging tools in the browser console
