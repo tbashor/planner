@@ -74,17 +74,17 @@ class LettaService {
     // Create a new agent from template
     try {
       console.log('🔄 Creating new agent from template:', this.config.templateName);
-      const response = await this.client.templates.createAgents(
-        this.config.projectSlug,
-        this.config.templateName
-      );
+      const response = await this.client.templates.create({
+        projectSlug: this.config.projectSlug,
+        templateName: this.config.templateName
+      });
 
-      if (response.agents && response.agents.length > 0) {
-        this.currentAgentId = response.agents[0].id;
+      if (response && response.id) {
+        this.currentAgentId = response.id;
         console.log('✅ Created new agent:', this.currentAgentId);
         return this.currentAgentId;
       } else {
-        throw new Error('No agents returned from template creation');
+        throw new Error('No agent ID returned from template creation');
       }
     } catch (error) {
       console.error('❌ Failed to create agent:', error);
