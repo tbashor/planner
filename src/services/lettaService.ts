@@ -74,9 +74,9 @@ class LettaService {
     // Create a new agent from template
     try {
       console.log('🔄 Creating new agent from template:', this.config.templateName);
-      const response = await this.client.templates.create({
-        projectSlug: this.config.projectSlug,
-        templateName: this.config.templateName
+      const response = await this.client.agents.create({
+        name: `Calendar Assistant - ${Date.now()}`,
+        description: 'AI assistant for calendar management and scheduling',
       });
 
       if (response && response.id) {
@@ -84,7 +84,7 @@ class LettaService {
         console.log('✅ Created new agent:', this.currentAgentId);
         return this.currentAgentId;
       } else {
-        throw new Error('No agent ID returned from template creation');
+        throw new Error('No agent ID returned from agent creation');
       }
     } catch (error) {
       console.error('❌ Failed to create agent:', error);
