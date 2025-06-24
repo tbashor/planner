@@ -1,81 +1,114 @@
-# Letta Agent Integration
+# Letta Agent Integration (Vite + React)
 
-This calendar app now integrates with your Letta agent for intelligent calendar management using the official Letta SDK (`@letta-ai/letta-client`).
+This calendar app integrates with Letta agents for intelligent calendar management using the official Letta SDK (`@letta-ai/letta-client`).
 
-## Setup
+## 🏗️ **Architecture Overview**
 
-### 1. Environment Configuration
+This project uses a **direct client-side integration** with Letta, which is different from Letta's Next.js recommendations:
 
-**IMPORTANT**: This project uses Vite, so environment variables must be prefixed with `VITE_` (not `REACT_APP_`).
+### **This Project (Vite + React)**
+- ✅ Direct Letta client SDK (`@letta-ai/letta-client`)
+- ✅ Client-side only (no server components needed)
+- ✅ Direct API calls to Letta Cloud
+- ✅ Manual message handling with full control
+- ✅ Local state management
+
+### **Letta's Next.js Approach**
+- Uses `@letta-ai/vercel-ai-sdk-provider` + Vercel AI SDK
+- Requires Next.js App Router with server components
+- Uses server-side API routes for streaming
+- Cookie-based session management
+
+## 🚀 **Setup**
+
+### 1. Get Letta Credentials
+
+1. **Sign up** for Letta Cloud at [https://app.letta.ai](https://app.letta.ai)
+2. **Create a project** or use the default project
+3. **Get your API key** from the dashboard
+4. **Note your project slug** (usually `default-project`)
+
+### 2. Environment Configuration
+
+**IMPORTANT**: This project uses Vite, so environment variables must be prefixed with `VITE_`.
 
 Create a `.env` file in your project root:
 
 ```env
-VITE_LETTA_BASE_URL=http://localhost:8000
-VITE_LETTA_AGENT_ID=your-agent-id-here
-VITE_LETTA_API_KEY=your-api-key-here
+VITE_LETTA_BASE_URL=https://api.letta.ai
+VITE_LETTA_API_KEY=your_letta_api_key_here
+VITE_LETTA_PROJECT_SLUG=default-project
+VITE_LETTA_AGENT_ID=your_agent_id_here
+VITE_LETTA_TEMPLATE_NAME=cal-planner-agent:latest
 ```
 
-### 2. Environment Variable Requirements
+### 3. Environment Variables Explained
 
-#### Vite vs Create React App
-- **Vite** (this project): Use `VITE_` prefix
-- **Create React App**: Uses `REACT_APP_` prefix
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `VITE_LETTA_BASE_URL` | No | Letta API endpoint | `https://api.letta.ai` |
+| `VITE_LETTA_API_KEY` | **Yes** | Your Letta API key | None |
+| `VITE_LETTA_PROJECT_SLUG` | No | Your project slug | `default-project` |
+| `VITE_LETTA_AGENT_ID` | No | Specific agent ID (optional) | Will create new |
+| `VITE_LETTA_TEMPLATE_NAME` | No | Template for agent creation | `cal-planner-agent:latest` |
 
-This project supports both for compatibility:
-- Primary: `VITE_LETTA_*` variables
-- Fallback: `REACT_APP_LETTA_*` variables
+### 4. Agent Management
 
-#### Required Variables
-- `VITE_LETTA_BASE_URL`: Your Letta server URL (default: http://localhost:8000)
-- `VITE_LETTA_AGENT_ID`: Your specific agent ID (required)
-- `VITE_LETTA_API_KEY`: Optional API key for authentication
+The service automatically handles agent creation:
 
-### 3. Configuration Options
+- **If `VITE_LETTA_AGENT_ID` is provided**: Uses that specific agent
+- **If not provided**: Creates a new agent from the template
+- **Agent persistence**: The created agent ID is stored in the session
 
-You can also configure the Letta connection programmatically by modifying `src/config/lettaConfig.ts`:
+## 🔧 **Configuration Options**
+
+### Programmatic Configuration
+
+You can also configure Letta by modifying `src/config/lettaConfig.ts`:
 
 ```typescript
 export const defaultLettaConfig: LettaConfig = {
-  baseUrl: 'http://your-letta-server:port',
-  agentId: 'your-agent-id',
-  apiKey: 'your-api-key', // Optional
+  baseUrl: 'https://api.letta.ai',
+  apiKey: 'your-api-key',
+  projectSlug: 'your-project-slug',
+  agentId: 'optional-agent-id',
+  templateName: 'cal-planner-agent:latest',
 };
 ```
 
-### 4. Debugging Environment Variables
+### Debugging Environment Variables
 
-The app includes debugging tools to help you verify your environment variables are loaded correctly:
+The app includes debugging tools to verify your configuration:
 
 1. Open browser developer tools
 2. Look for console messages starting with "🔧 Letta Configuration Debug"
-3. Check if your variables are being detected
+3. Check if your variables are being detected correctly
 
-## Features
+## 🎯 **Features**
 
-### ✅ **Real-time Chat**
+### ✅ **Intelligent Chat**
 - Send messages to your Letta agent
-- Get responses with calendar context
+- Get contextual responses about calendar management
 - Conversation history tracking
 
 ### ✅ **Context-Aware Communication**
-- Agent receives current date
+- Agent receives current date and time
 - Today's events are shared as context
 - User preferences (working hours, focus areas) included
+- Smart calendar suggestions
 
-### ✅ **Connection Monitoring**
-- Real-time connection status
+### ✅ **Agent Management**
+- Automatic agent creation from templates
+- Session-based agent persistence
 - Health check functionality
 - Graceful error handling
 
 ### ✅ **Calendar Integration**
-- Agent can understand calendar-related requests
+- Agent understands calendar-related requests
 - Context includes current events and preferences
 - Support for event parsing and suggestions
 
-## API Usage
-
-The `LettaService` provides several methods:
+## 📚 **API Usage**
 
 ### Send Message
 ```typescript
@@ -103,9 +136,28 @@ const suggestions = await lettaService.generateSuggestions(
 const isConnected = await lettaService.healthCheck();
 ```
 
-## Agent Development
+### Get Agent Info
+```typescript
+const agentInfo = await lettaService.getAgentInfo();
+const currentAgentId = lettaService.getCurrentAgentId();
+```
 
-Your Letta agent will receive messages in this format:
+## 🏗️ **File Structure**
+
+```
+src/
+├── services/
+│   └── lettaService.ts          # Enhanced Letta SDK integration
+├── config/
+│   └── lettaConfig.ts           # Configuration and validation
+└── components/
+    └── AiAssistant/
+        └── AiSidebar.tsx        # UI with Letta integration
+```
+
+## 🔍 **Agent Development**
+
+Your Letta agent receives messages in this format:
 
 ### System Message (Context)
 ```
@@ -120,28 +172,7 @@ Working hours: 09:00 to 17:00
 Schedule a workout session for tomorrow
 ```
 
-## File Structure
-
-```
-src/
-├── services/
-│   └── lettaService.ts          # Main Letta SDK integration
-├── config/
-│   └── lettaConfig.ts           # Configuration and validation
-└── components/
-    └── AiAssistant/
-        └── AiSidebar.tsx        # Updated UI with Letta integration
-```
-
-## Error Handling
-
-The integration includes comprehensive error handling:
-
-- **Connection failures**: Graceful fallbacks with user-friendly messages
-- **API errors**: Logged to console with fallback responses
-- **Type safety**: Full TypeScript support with proper error types
-
-## Troubleshooting
+## 🛠️ **Troubleshooting**
 
 ### Environment Variables Not Loading
 
@@ -152,42 +183,64 @@ The integration includes comprehensive error handling:
 
 ```env
 # ✅ Correct
-VITE_LETTA_BASE_URL=http://localhost:8000
+VITE_LETTA_API_KEY=your_api_key_here
 
 # ❌ Incorrect
-VITE_LETTA_BASE_URL = http://localhost:8000
+VITE_LETTA_API_KEY = your_api_key_here
 ```
 
 ### Connection Issues
-1. Check that your Letta server is running
-2. Verify the `baseUrl` in your configuration
-3. Ensure the `agentId` exists
-4. Check API key permissions (if using authentication)
 
-### Agent Not Responding
-1. Check agent status in Letta dashboard
-2. Verify agent has proper calendar management capabilities
-3. Check console for error messages
+1. **Check API key**: Ensure it's valid and has proper permissions
+2. **Verify base URL**: Should be `https://api.letta.ai` for Letta Cloud
+3. **Check project slug**: Must match your Letta project
+4. **Network issues**: Check if you can access Letta Cloud directly
 
-### UI Issues
-1. Check browser console for JavaScript errors
-2. Verify environment variables are loaded (see debugging section)
-3. Test the health check endpoint manually
+### Agent Creation Issues
 
-## Next Steps
+1. **Template not found**: Verify `VITE_LETTA_TEMPLATE_NAME` exists
+2. **Project permissions**: Ensure your API key has access to the project
+3. **Quota limits**: Check if you've reached agent creation limits
 
-To further enhance the integration:
+### Debug Console Messages
 
-1. **Event Parsing**: Implement structured event creation from agent responses
-2. **Suggestions**: Parse agent suggestions into actionable calendar items
-3. **Voice Integration**: Add voice commands for agent interaction
-4. **Batch Operations**: Support multiple calendar operations in one request
-5. **Learning**: Enable the agent to learn from user behavior and preferences
+Look for these console messages:
 
-## Support
+- `🤖 Letta Service initialized` - Service startup
+- `✅ Using existing agent` - Found existing agent
+- `🔄 Creating new agent from template` - Creating new agent
+- `✅ Created new agent` - Agent creation success
+- `❌ Failed to create agent` - Agent creation failed
+
+## 🔄 **Migration from Next.js Approach**
+
+If you want to use Letta's exact Next.js recommendations, you would need to:
+
+1. **Migrate to Next.js** with App Router
+2. **Install Vercel AI SDK packages**:
+   ```bash
+   npm install @letta-ai/vercel-ai-sdk-provider ai @ai-sdk/react
+   ```
+3. **Create server-side API routes** for streaming
+4. **Implement server components** for agent management
+5. **Use cookie-based sessions** instead of local state
+
+However, the current Vite approach offers more flexibility and direct control over the Letta integration.
+
+## 🎯 **Next Steps**
+
+To enhance the integration further:
+
+1. **Structured Response Parsing**: Parse agent responses for calendar events
+2. **Advanced Context**: Include more calendar context (conflicts, preferences)
+3. **Event Creation**: Let agents create calendar events directly
+4. **Batch Operations**: Support multiple calendar operations
+5. **Learning**: Enable agents to learn from user behavior
+
+## 📞 **Support**
 
 For issues with:
-- **Letta SDK**: Check the [official Letta documentation](https://docs.letta.ai)
-- **Integration**: Review the code in `src/services/lettaService.ts`
+- **Letta SDK**: Check [Letta documentation](https://docs.letta.ai)
+- **Integration**: Review `src/services/lettaService.ts`
 - **Configuration**: Check `src/config/lettaConfig.ts`
-- **Environment Variables**: Use the debugging tools in the browser console
+- **Environment Variables**: Use browser console debugging tools

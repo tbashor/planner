@@ -3,7 +3,7 @@ import { defaultLettaConfig, LettaConfig, debugEnvironmentVariables } from '../c
 import { LettaClient, Letta } from '@letta-ai/letta-client';
 
 export interface LettaMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp?: string;
 }
@@ -19,6 +19,7 @@ class LettaService {
   private config: LettaConfig;
   private client: LettaClient;
   private conversationHistory: LettaMessage[] = [];
+  private currentAgentId: string | null = null;
 
   constructor(config: LettaConfig) {
     this.config = config;
@@ -35,7 +36,9 @@ class LettaService {
     
     console.log('🤖 Letta Service initialized:');
     console.log('- Base URL:', config.baseUrl);
-    console.log('- Agent ID:', config.agentId);
+    console.log('- Project Slug:', config.projectSlug);
+    console.log('- Template:', config.templateName);
+    console.log('- Agent ID:', config.agentId || 'Will be created');
     console.log('- API Key:', config.apiKey ? 'Configured' : 'Not configured');
   }
 
@@ -48,6 +51,47 @@ class LettaService {
     });
   }
 
+  /**
+   * Get or create an agent for the current session
+   */
+  private async getOrCreateAgent(): Promise<string> {
+    if (this.currentAgentId) {
+      return this.currentAgentId;
+    }
+
+    // If we have a specific agent ID, use it
+    if (this.config.agentId) {
+      try {
+        await this.client.agents.retrieve(this.config.agentId);
+        this.currentAgentId = this.config.agentId;
+        console.log('✅ Using existing agent:', this.config.agentId);
+        return this.currentAgentId;
+      } catch (error) {
+        console.warn('⚠️ Specified agent not found, creating new one:', error);
+      }
+    }
+
+    // Create a new agent from template
+    try {
+      console.log('🔄 Creating new agent from template:', this.config.templateName);
+      const response = await this.client.templates.createAgents(
+        this.config.projectSlug,
+        this.config.templateName
+      );
+
+      if (response.agents && response.agents.length > 0) {
+        this.currentAgentId = response.agents[0].id;
+        console.log('✅ Created new agent:', this.currentAgentId);
+        return this.currentAgentId;
+      } else {
+        throw new Error('No agents returned from template creation');
+      }
+    } catch (error) {
+      console.error('❌ Failed to create agent:', error);
+      throw new Error(`Failed to create agent: ${error}`);
+    }
+  }
+
   async sendMessage(
     message: string,
     context?: {
@@ -57,6 +101,9 @@ class LettaService {
     }
   ): Promise<LettaResponse> {
     try {
+      // Ensure we have an agent
+      const agentId = await this.getOrCreateAgent();
+
       // Add user message to conversation history
       const userMessage: LettaMessage = {
         role: 'user',
@@ -85,7 +132,7 @@ class LettaService {
       }
 
       // Send message to Letta agent using the SDK
-      const response = await this.client.agents.messages.create(this.config.agentId, {
+      const response = await this.client.agents.messages.create(agentId, {
         messages: messages,
         maxSteps: 5,
       });
@@ -132,7 +179,7 @@ class LettaService {
       
       // Return a fallback response
       return {
-        message: "I'm having trouble connecting to my AI assistant right now. Please try again in a moment.",
+        message: "I'm having trouble connecting to my AI assistant right now. Please check your Letta configuration and try again.",
         suggestions: [],
         events: [],
         action: undefined,
@@ -191,6 +238,8 @@ class LettaService {
     currentDate: Date
   ): Promise<AiSuggestion[]> {
     try {
+      const agentId = await this.getOrCreateAgent();
+
       const contextMessage = `Please generate 3-5 personalized calendar suggestions based on:
 - Current events: ${events.map(e => `${e.date} ${e.startTime}: ${e.title}`).join(', ')}
 - Focus areas: ${preferences.focusAreas?.join(', ') || 'general productivity'}
@@ -199,7 +248,7 @@ class LettaService {
 
 Return suggestions for productive activities, breaks, or schedule optimizations.`;
 
-      await this.client.agents.messages.create(this.config.agentId, {
+      await this.client.agents.messages.create(agentId, {
         messages: [
           {
             role: 'user',
@@ -222,6 +271,8 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
     preferences: UserPreferences
   ): Promise<Event | null> {
     try {
+      const agentId = await this.getOrCreateAgent();
+
       const parsePrompt = `Parse this message for calendar event information: "${message}"
 User preferences:
 - Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
@@ -230,7 +281,7 @@ User preferences:
 If this is a request to create an event, extract the title, date, start time, end time, and category.
 Respond with event details if found, or "NO_EVENT" if this is not an event creation request.`;
 
-      await this.client.agents.messages.create(this.config.agentId, {
+      await this.client.agents.messages.create(agentId, {
         messages: [
           {
             role: 'user',
@@ -261,8 +312,14 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   // Health check using SDK
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.agents.retrieve(this.config.agentId);
-      return !!response;
+      if (!this.config.apiKey) {
+        console.warn('⚠️ No API key configured for Letta');
+        return false;
+      }
+
+      // Try to get or create an agent as a health check
+      const agentId = await this.getOrCreateAgent();
+      return !!agentId;
     } catch (error) {
       console.error('Letta agent health check failed:', error);
       return false;
@@ -272,7 +329,8 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   // Get agent info
   async getAgentInfo() {
     try {
-      return await this.client.agents.retrieve(this.config.agentId);
+      const agentId = await this.getOrCreateAgent();
+      return await this.client.agents.retrieve(agentId);
     } catch (error) {
       console.error('Error getting agent info:', error);
       return null;
@@ -287,6 +345,11 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
       console.error('Error listing agents:', error);
       return [];
     }
+  }
+
+  // Get current agent ID
+  getCurrentAgentId(): string | null {
+    return this.currentAgentId;
   }
 }
 
