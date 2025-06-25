@@ -330,7 +330,7 @@ class LettaService {
    * Extract assistant message from Letta response with improved logic
    */
   private extractAssistantMessage(response: any): string {
-    console.log('🔍 Extracting assistant message from response...');
+    console.log('🔍 Extracting assistant message from response...',response);
     
     if (!response.messages || !Array.isArray(response.messages)) {
       console.warn('⚠️ No messages array in response');
