@@ -234,6 +234,7 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       const response = await this.client.agents.create({
         name: `Calendar Assistant - ${Date.now()}`,
         description: 'AI assistant for calendar management and scheduling',
+        fromTemplate: this.config.templateName,
       });
       const endTime = performance.now();
 
