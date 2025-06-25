@@ -37,10 +37,19 @@ export default function AiSidebar() {
     try {
       const isHealthy = await lettaService.healthCheck();
       setIsLettaConnected(isHealthy);
-      setLettaConnectionError(isHealthy ? null : 'Unable to connect to Letta agent');
-    } catch {
+      
+      if (!isHealthy) {
+        // Get the specific error message from the Letta service
+        const lastError = lettaService.getLastError();
+        setLettaConnectionError(lastError || 'Unable to connect to Letta agent');
+      } else {
+        setLettaConnectionError(null);
+      }
+    } catch (error) {
       setIsLettaConnected(false);
-      setLettaConnectionError('Letta agent connection failed');
+      // Get the specific error message from the Letta service
+      const lastError = lettaService.getLastError();
+      setLettaConnectionError(lastError || 'Letta agent connection failed');
     }
   };
 
@@ -237,21 +246,25 @@ export default function AiSidebar() {
         
         {/* Connection Error */}
         {lettaConnectionError && (
-          <div className={`mt-2 p-2 rounded-md text-xs ${
+          <div className={`mt-3 p-3 rounded-md text-sm ${
             state.isDarkMode 
-              ? 'bg-red-900/30 text-red-400 border border-red-800' 
-              : 'bg-red-50 text-red-600 border border-red-200'
+              ? 'bg-red-900/30 text-red-300 border border-red-800' 
+              : 'bg-red-50 text-red-700 border border-red-200'
           }`}>
-            <div className="flex items-center space-x-1">
-              <AlertCircle className="w-3 h-3" />
-              <span>Letta agent offline</span>
+            <div className="flex items-start space-x-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="whitespace-pre-wrap break-words">{lettaConnectionError}</div>
+                <button 
+                  onClick={checkLettaConnection}
+                  className={`mt-2 text-xs underline hover:no-underline ${
+                    state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                  }`}
+                >
+                  Retry connection
+                </button>
+              </div>
             </div>
-            <button 
-              onClick={checkLettaConnection}
-              className="mt-1 text-xs underline hover:no-underline"
-            >
-              Retry connection
-            </button>
           </div>
         )}
       </div>
