@@ -246,7 +246,7 @@ export default function AiSidebar() {
         
         {/* Connection Error */}
         {lettaConnectionError && (
-          <div className={`mt-3 p-3 rounded-md text-sm ${
+          <div className={`mt-3 p-3 rounded-md text-sm max-h-32 overflow-y-auto ${
             state.isDarkMode 
               ? 'bg-red-900/30 text-red-300 border border-red-800' 
               : 'bg-red-50 text-red-700 border border-red-200'
@@ -269,9 +269,17 @@ export default function AiSidebar() {
         )}
       </div>
 
-      {/* Chat Messages - Fixed height with scroll */}
+      {/* Chat Messages - Constrained height with forced scroll */}
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div 
+          className={`flex-1 overflow-y-auto p-4 space-y-4 ${
+            state.isDarkMode ? 'scrollbar-dark' : 'scrollbar-light'
+          }`}
+          style={{ 
+            maxHeight: 'calc(100vh - 400px)', // Force a maximum height
+            minHeight: '200px' // Ensure minimum height
+          }}
+        >
           {state.chatMessages.length === 0 && (
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
