@@ -21,6 +21,8 @@ class LettaService {
   private conversationHistory: LettaMessage[] = [];
   private currentAgentId: string | null = null;
   private requestCounter = 0;
+  private agentCreationFailed = false;
+  private lastError: string | null = null;
 
   constructor(config: LettaConfig) {
     this.config = config;
@@ -117,13 +119,78 @@ class LettaService {
       token: this.config.apiKey,
     });
     
+    // Reset error states when config is updated
+    this.agentCreationFailed = false;
+    this.lastError = null;
+    this.currentAgentId = null;
+    
     console.log('✅ Letta configuration updated successfully');
+  }
+
+  /**
+   * Check if error is related to agent creation limits
+   */
+  private isAgentLimitError(error: any): boolean {
+    const errorMessage = error?.message || '';
+    const statusCode = error?.status || error?.statusCode;
+    
+    return statusCode === 402 || 
+           errorMessage.includes('limit') || 
+           errorMessage.includes('upgrade your plan') ||
+           errorMessage.includes('reached your limit');
+  }
+
+  /**
+   * Get helpful error message for agent limit issues
+   */
+  private getAgentLimitErrorMessage(): string {
+    return `🚫 Agent Creation Limit Reached
+
+Your Letta Cloud account has reached its agent creation limit. To resolve this:
+
+1. 🌐 Go to your Letta Cloud dashboard: https://app.letta.ai
+2. 📋 Find an existing agent ID from your agent list
+3. ⚙️ Add it to your .env file: VITE_LETTA_AGENT_ID=your_agent_id_here
+4. 🔄 Restart your development server
+
+Alternatively, you can:
+- 🗑️ Delete unused agents to free up space
+- 💳 Upgrade your Letta Cloud plan for more agents
+
+The AI assistant will work normally once you configure an existing agent ID.`;
+  }
+
+  /**
+   * Try to list existing agents to help user find one to reuse
+   */
+  private async tryListExistingAgents(): Promise<string[]> {
+    try {
+      console.log('🔍 Attempting to list existing agents...');
+      const agents = await this.client.agents.list();
+      const agentIds = agents.map(agent => agent.id);
+      
+      if (agentIds.length > 0) {
+        console.log('✅ Found existing agents:', agentIds);
+        console.log('💡 You can use any of these agent IDs in your .env file:');
+        agentIds.forEach(id => console.log(`   VITE_LETTA_AGENT_ID=${id}`));
+      }
+      
+      return agentIds;
+    } catch (error) {
+      console.warn('⚠️ Could not list existing agents:', error);
+      return [];
+    }
   }
 
   /**
    * Get or create an agent for the current session
    */
   private async getOrCreateAgent(): Promise<string> {
+    // If we previously failed to create an agent due to limits, don't try again
+    if (this.agentCreationFailed) {
+      throw new Error(this.lastError || 'Agent creation previously failed due to account limits');
+    }
+
     if (this.currentAgentId) {
       console.log('🔄 Using cached agent ID:', this.currentAgentId);
       return this.currentAgentId;
@@ -150,7 +217,7 @@ class LettaService {
         return this.currentAgentId;
       } catch (error) {
         this.logResponse(requestId, 'Agent Retrieval', false, {}, error);
-        console.warn('⚠️ Specified agent not found, creating new one:', error);
+        console.warn('⚠️ Specified agent not found, will try to create new one:', error);
       }
     }
 
@@ -180,12 +247,30 @@ class LettaService {
         });
         
         console.log('✅ Created new agent:', this.currentAgentId);
+        console.log('💡 To avoid creating new agents in the future, add this to your .env file:');
+        console.log(`   VITE_LETTA_AGENT_ID=${this.currentAgentId}`);
+        
         return this.currentAgentId;
       } else {
         throw new Error('No agent ID returned from agent creation');
       }
     } catch (error) {
       this.logResponse(requestId, 'Agent Creation', false, {}, error);
+      
+      // Check if this is an agent limit error
+      if (this.isAgentLimitError(error)) {
+        this.agentCreationFailed = true;
+        this.lastError = this.getAgentLimitErrorMessage();
+        
+        console.error('🚫 Agent creation limit reached!');
+        console.error(this.lastError);
+        
+        // Try to list existing agents to help the user
+        await this.tryListExistingAgents();
+        
+        throw new Error(this.lastError);
+      }
+      
       console.error('❌ Failed to create agent:', error);
       throw new Error(`Failed to create agent: ${error}`);
     }
@@ -316,9 +401,19 @@ class LettaService {
       this.logResponse(requestId, 'Send Message', false, {}, error);
       console.error('❌ Error communicating with Letta agent:', error);
       
-      // Return a fallback response
+      // Return a more helpful fallback response based on the error type
+      let fallbackMessage = "I'm having trouble connecting to my AI assistant right now.";
+      
+      if (this.isAgentLimitError(error)) {
+        fallbackMessage = this.getAgentLimitErrorMessage();
+      } else if (!this.config.apiKey) {
+        fallbackMessage = "Please configure your Letta API key in the .env file to enable AI assistance.";
+      } else {
+        fallbackMessage += " Please check your Letta configuration and try again.";
+      }
+      
       return {
-        message: "I'm having trouble connecting to my AI assistant right now. Please check your Letta configuration and try again.",
+        message: fallbackMessage,
         suggestions: [],
         events: [],
         action: undefined,
@@ -602,13 +697,21 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   async healthCheck(): Promise<boolean> {
     const requestId = this.logRequest('Health Check', {
       hasApiKey: !!this.config.apiKey,
-      baseUrl: this.config.baseUrl
+      baseUrl: this.config.baseUrl,
+      agentCreationFailed: this.agentCreationFailed
     });
 
     try {
       if (!this.config.apiKey) {
         console.warn('⚠️ No API key configured for Letta');
         this.logResponse(requestId, 'Health Check', false, {}, new Error('No API key configured'));
+        return false;
+      }
+
+      // If agent creation previously failed due to limits, don't try again
+      if (this.agentCreationFailed) {
+        console.warn('⚠️ Agent creation previously failed due to account limits');
+        this.logResponse(requestId, 'Health Check', false, {}, new Error(this.lastError || 'Agent creation failed'));
         return false;
       }
 
@@ -694,6 +797,8 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
       requestCount: this.requestCounter,
       conversationLength: this.conversationHistory.length,
       currentAgentId: this.currentAgentId,
+      agentCreationFailed: this.agentCreationFailed,
+      lastError: this.lastError,
       configurationStatus: {
         hasApiKey: !!this.config.apiKey,
         baseUrl: this.config.baseUrl,
@@ -704,6 +809,23 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
 
     console.log('📊 Letta Service Statistics:', stats);
     return stats;
+  }
+
+  // Get last error message (useful for UI display)
+  getLastError(): string | null {
+    return this.lastError;
+  }
+
+  // Check if service is in error state
+  isInErrorState(): boolean {
+    return this.agentCreationFailed;
+  }
+
+  // Reset error state (useful when user updates configuration)
+  resetErrorState(): void {
+    this.agentCreationFailed = false;
+    this.lastError = null;
+    console.log('🔄 Reset Letta service error state');
   }
 }
 
