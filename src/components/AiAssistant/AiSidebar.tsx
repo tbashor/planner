@@ -198,7 +198,7 @@ export default function AiSidebar() {
         : 'bg-gray-50 border-gray-200'
     }`}>
       {/* Header */}
-      <div className={`p-4 border-b ${
+      <div className={`p-4 border-b flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center justify-between">
@@ -256,117 +256,119 @@ export default function AiSidebar() {
         )}
       </div>
 
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {state.chatMessages.length === 0 && (
-          <div className={`text-center py-8 ${
-            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-          }`}>
-            <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Start a conversation with your Letta assistant</p>
-            <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
-          </div>
-        )}
-        
-        {state.chatMessages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[80%] p-3 rounded-lg ${
-                message.type === 'user'
-                  ? 'bg-blue-500 text-white'
-                  : state.isDarkMode
-                  ? 'bg-gray-800 text-gray-200'
-                  : 'bg-white text-gray-900 border border-gray-200'
-              }`}
-            >
-              <p className="text-sm">{message.content}</p>
-              <p className={`text-xs mt-1 opacity-70`}>
-                {new Date(message.timestamp).toLocaleTimeString()}
-              </p>
-            </div>
-          </div>
-        ))}
-
-        {/* Processing indicator */}
-        {isProcessingMessage && (
-          <div className="flex justify-start">
-            <div className={`max-w-[80%] p-3 rounded-lg ${
-              state.isDarkMode
-                ? 'bg-gray-800 text-gray-200'
-                : 'bg-white text-gray-900 border border-gray-200'
+      {/* Chat Messages - Fixed height with scroll */}
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {state.chatMessages.length === 0 && (
+            <div className={`text-center py-8 ${
+              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              <div className="flex items-center space-x-2">
-                <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                </div>
-                <span className="text-xs opacity-70">Letta is thinking...</span>
+              <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Start a conversation with your Letta assistant</p>
+              <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
+            </div>
+          )}
+          
+          {state.chatMessages.map((message) => (
+            <div
+              key={message.id}
+              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[80%] p-3 rounded-lg ${
+                  message.type === 'user'
+                    ? 'bg-blue-500 text-white'
+                    : state.isDarkMode
+                    ? 'bg-gray-800 text-gray-200'
+                    : 'bg-white text-gray-900 border border-gray-200'
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                <p className={`text-xs mt-1 opacity-70`}>
+                  {new Date(message.timestamp).toLocaleTimeString()}
+                </p>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          ))}
 
-      {/* Chat Input */}
-      <div className={`p-4 border-t ${
-        state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-      }`}>
-        <form onSubmit={handleSendMessage} className="flex space-x-2">
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder={isLettaConnected ? "Ask Letta to manage your calendar..." : "Letta agent is offline"}
-            disabled={isProcessingMessage || !isLettaConnected}
-            className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              state.isDarkMode
-                ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
-                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
-          />
-          {state.user?.preferences.voiceInput && (
-            <button
-              type="button"
-              onClick={handleVoiceInput}
-              disabled={isProcessingMessage || !isLettaConnected}
-              className={`p-2 rounded-lg transition-colors duration-200 ${
-                isListening
-                  ? 'bg-red-500 text-white'
-                  : state.isDarkMode
-                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-              } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <Mic className="h-4 w-4" />
-            </button>
+          {/* Processing indicator */}
+          {isProcessingMessage && (
+            <div className="flex justify-start">
+              <div className={`max-w-[80%] p-3 rounded-lg ${
+                state.isDarkMode
+                  ? 'bg-gray-800 text-gray-200'
+                  : 'bg-white text-gray-900 border border-gray-200'
+              }`}>
+                <div className="flex items-center space-x-2">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
+                  <span className="text-xs opacity-70">Letta is thinking...</span>
+                </div>
+              </div>
+            </div>
           )}
-          <button
-            type="submit"
-            disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected}
-            className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-        </form>
-        
-        {/* Helper text */}
-        <div className={`mt-2 text-xs ${
-          state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+        </div>
+
+        {/* Chat Input - Fixed at bottom */}
+        <div className={`p-4 border-t flex-shrink-0 ${
+          state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
         }`}>
-          {isLettaConnected ? (
-            <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
-          ) : (
-            <p>🔌 Connect to Letta agent to start managing your calendar with AI</p>
-          )}
+          <form onSubmit={handleSendMessage} className="flex space-x-2">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder={isLettaConnected ? "Ask Letta to manage your calendar..." : "Letta agent is offline"}
+              disabled={isProcessingMessage || !isLettaConnected}
+              className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                state.isDarkMode
+                  ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
+                  : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
+              } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
+            />
+            {state.user?.preferences.voiceInput && (
+              <button
+                type="button"
+                onClick={handleVoiceInput}
+                disabled={isProcessingMessage || !isLettaConnected}
+                className={`p-2 rounded-lg transition-colors duration-200 ${
+                  isListening
+                    ? 'bg-red-500 text-white'
+                    : state.isDarkMode
+                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected}
+              className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </form>
+          
+          {/* Helper text */}
+          <div className={`mt-2 text-xs ${
+            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+          }`}>
+            {isLettaConnected ? (
+              <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
+            ) : (
+              <p>🔌 Connect to Letta agent to start managing your calendar with AI</p>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* AI Suggestions */}
-      <div className={`border-t p-4 ${
+      {/* AI Suggestions - Fixed at bottom */}
+      <div className={`border-t p-4 flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center justify-between mb-3">
@@ -396,7 +398,7 @@ export default function AiSidebar() {
           </button>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-48 overflow-y-auto">
           {state.aiSuggestions.length === 0 ? (
             <div className={`text-center py-4 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -416,7 +418,7 @@ export default function AiSidebar() {
         </div>
       </div>
 
-      {/* Google Calendar Integration */}
+      {/* Google Calendar Integration - Fixed at bottom */}
       <GoogleCalendarAuth />
     </div>
   );
