@@ -35,7 +35,9 @@ export default function AiSidebar() {
 
   const checkLettaConnection = async () => {
     try {
-      const isHealthy = await lettaService.healthCheck();
+      // Pass user email for agent naming if available
+      const userEmail = state.user?.email;
+      const isHealthy = await lettaService.healthCheck(userEmail);
       setIsLettaConnected(isHealthy);
       
       if (!isHealthy) {
@@ -74,11 +76,12 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      // Send message to Letta agent
+      // Send message to Letta agent with user email for context
       const lettaResponse = await lettaService.sendMessage(userMessage, {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
+        userEmail: state.user?.email,
       });
 
       // If Letta returned a parsed event, add it to the calendar
@@ -162,11 +165,12 @@ export default function AiSidebar() {
     });
 
     try {
-      // Generate new suggestions using Letta agent
+      // Generate new suggestions using Letta agent with user email
       const newSuggestions = await lettaService.generateSuggestions(
         state.events,
         state.user!.preferences,
-        new Date()
+        new Date(),
+        state.user?.email
       );
 
       newSuggestions.forEach(suggestion => {
@@ -244,6 +248,15 @@ export default function AiSidebar() {
           </div>
         </div>
         
+        {/* User Info */}
+        {state.user?.email && isLettaConnected && (
+          <div className={`mt-2 text-xs ${
+            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+          }`}>
+            <span>Agent: planner-{state.user.email}</span>
+          </div>
+        )}
+        
         {/* Connection Error */}
         {lettaConnectionError && (
           <div className={`mt-3 p-3 rounded-md text-sm max-h-32 overflow-y-auto ${
@@ -287,6 +300,11 @@ export default function AiSidebar() {
               <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Start a conversation with your Letta assistant</p>
               <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
+              {state.user?.email && (
+                <p className="text-xs mt-2 opacity-75">
+                  Your agent: planner-{state.user.email}
+                </p>
+              )}
             </div>
           )}
           

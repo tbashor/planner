@@ -183,9 +183,21 @@ The AI assistant will work normally once you configure an existing agent ID.`;
   }
 
   /**
+   * Generate agent name based on user email
+   */
+  private generateAgentName(userEmail?: string): string {
+    if (userEmail) {
+      return `planner-${userEmail}`;
+    }
+    
+    // Fallback if no user email is available
+    return `planner-${Date.now()}`;
+  }
+
+  /**
    * Get or create an agent for the current session
    */
-  private async getOrCreateAgent(): Promise<string> {
+  private async getOrCreateAgent(userEmail?: string): Promise<string> {
     // If we previously failed to create an agent due to limits, don't try again
     if (this.agentCreationFailed) {
       throw new Error(this.lastError || 'Agent creation previously failed due to account limits');
@@ -222,18 +234,22 @@ The AI assistant will work normally once you configure an existing agent ID.`;
     }
 
     // Create a new agent from template
+    const agentName = this.generateAgentName(userEmail);
     const requestId = this.logRequest('Agent Creation', { 
       templateName: this.config.templateName,
-      projectSlug: this.config.projectSlug 
+      projectSlug: this.config.projectSlug,
+      agentName: agentName,
+      userEmail: userEmail || 'Not provided'
     });
     
     try {
       console.log('🔄 Creating new agent from template:', this.config.templateName);
+      console.log('📧 Agent name will be:', agentName);
       
       const startTime = performance.now();
       const response = await this.client.agents.create({
-        name: `Calendar Assistant - ${Date.now()}`,
-        description: 'AI assistant for calendar management and scheduling',
+        name: agentName,
+        description: `AI assistant for calendar management and scheduling${userEmail ? ` for ${userEmail}` : ''}`,
         fromTemplate: this.config.templateName,
       });
       const endTime = performance.now();
@@ -244,10 +260,12 @@ The AI assistant will work normally once you configure an existing agent ID.`;
         this.logResponse(requestId, 'Agent Creation', true, {
           agentId: response.id,
           agentName: response.name,
+          userEmail: userEmail || 'Not provided',
           duration: Math.round(endTime - startTime) + 'ms'
         });
         
         console.log('✅ Created new agent:', this.currentAgentId);
+        console.log('📧 Agent name:', agentName);
         console.log('💡 To avoid creating new agents in the future, add this to your .env file:');
         console.log(`   VITE_LETTA_AGENT_ID=${this.currentAgentId}`);
         
@@ -283,23 +301,26 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       events?: Event[];
       preferences?: UserPreferences;
       currentDate?: Date;
+      userEmail?: string;
     }
   ): Promise<LettaResponse> {
     const requestId = this.logRequest('Send Message', {
       messageLength: message.length,
       hasContext: !!context,
       contextEvents: context?.events?.length || 0,
-      hasPreferences: !!context?.preferences
+      hasPreferences: !!context?.preferences,
+      userEmail: context?.userEmail || 'Not provided'
     });
 
     try {
-      // Ensure we have an agent
-      const agentId = await this.getOrCreateAgent();
+      // Ensure we have an agent (pass user email for agent naming)
+      const agentId = await this.getOrCreateAgent(context?.userEmail);
 
       // Log the outgoing message
       this.logConversation('send', message, {
         agentId,
-        contextProvided: !!context
+        contextProvided: !!context,
+        userEmail: context?.userEmail || 'Not provided'
       });
 
       // Add user message to conversation history
@@ -515,6 +536,7 @@ The AI assistant will work normally once you configure an existing agent ID.`;
     events?: Event[];
     preferences?: UserPreferences;
     currentDate?: Date;
+    userEmail?: string;
   }): string | null {
     if (!context) return null;
 
@@ -522,6 +544,10 @@ The AI assistant will work normally once you configure an existing agent ID.`;
     
     if (context.currentDate) {
       parts.push(`Current date: ${context.currentDate.toISOString().split('T')[0]}`);
+    }
+
+    if (context.userEmail) {
+      parts.push(`User email: ${context.userEmail}`);
     }
 
     if (context.events && context.events.length > 0) {
@@ -549,7 +575,8 @@ The AI assistant will work normally once you configure an existing agent ID.`;
         parts: parts.length,
         totalLength: contextMessage.length,
         hasEvents: !!(context?.events?.length),
-        hasPreferences: !!context?.preferences
+        hasPreferences: !!context?.preferences,
+        userEmail: context?.userEmail || 'Not provided'
       });
     }
 
@@ -574,28 +601,32 @@ The AI assistant will work normally once you configure an existing agent ID.`;
   async generateSuggestions(
     events: Event[],
     preferences: UserPreferences,
-    currentDate: Date
+    currentDate: Date,
+    userEmail?: string
   ): Promise<AiSuggestion[]> {
     const requestId = this.logRequest('Generate Suggestions', {
       eventsCount: events.length,
       focusAreas: preferences.focusAreas?.length || 0,
-      currentDate: currentDate.toISOString().split('T')[0]
+      currentDate: currentDate.toISOString().split('T')[0],
+      userEmail: userEmail || 'Not provided'
     });
 
     try {
-      const agentId = await this.getOrCreateAgent();
+      const agentId = await this.getOrCreateAgent(userEmail);
 
       const contextMessage = `Please generate 3-5 personalized calendar suggestions based on:
 - Current events: ${events.map(e => `${e.date} ${e.startTime}: ${e.title}`).join(', ')}
 - Focus areas: ${preferences.focusAreas?.join(', ') || 'general productivity'}
 - Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
 - Current date: ${currentDate.toISOString().split('T')[0]}
+${userEmail ? `- User: ${userEmail}` : ''}
 
 Return suggestions for productive activities, breaks, or schedule optimizations.`;
 
       console.log('📤 Generating suggestions with context:', {
         contextLength: contextMessage.length,
-        agentId
+        agentId,
+        userEmail: userEmail || 'Not provided'
       });
 
       const startTime = performance.now();
@@ -626,27 +657,31 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
 
   async parseEventFromMessage(
     message: string,
-    preferences: UserPreferences
+    preferences: UserPreferences,
+    userEmail?: string
   ): Promise<Event | null> {
     const requestId = this.logRequest('Parse Event', {
       messageLength: message.length,
-      hasPreferences: !!preferences
+      hasPreferences: !!preferences,
+      userEmail: userEmail || 'Not provided'
     });
 
     try {
-      const agentId = await this.getOrCreateAgent();
+      const agentId = await this.getOrCreateAgent(userEmail);
 
       const parsePrompt = `Parse this message for calendar event information: "${message}"
 User preferences:
 - Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
 - Focus areas: ${preferences.focusAreas?.join(', ') || 'general'}
+${userEmail ? `- User: ${userEmail}` : ''}
 
 If this is a request to create an event, extract the title, date, start time, end time, and category.
 Respond with event details if found, or "NO_EVENT" if this is not an event creation request.`;
 
       console.log('📤 Parsing event from message:', {
         originalMessage: message,
-        promptLength: parsePrompt.length
+        promptLength: parsePrompt.length,
+        userEmail: userEmail || 'Not provided'
       });
 
       const startTime = performance.now();
@@ -695,11 +730,12 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   }
 
   // Health check using SDK
-  async healthCheck(): Promise<boolean> {
+  async healthCheck(userEmail?: string): Promise<boolean> {
     const requestId = this.logRequest('Health Check', {
       hasApiKey: !!this.config.apiKey,
       baseUrl: this.config.baseUrl,
-      agentCreationFailed: this.agentCreationFailed
+      agentCreationFailed: this.agentCreationFailed,
+      userEmail: userEmail || 'Not provided'
     });
 
     try {
@@ -720,7 +756,7 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
       
       // Try to get or create an agent as a health check
       const startTime = performance.now();
-      const agentId = await this.getOrCreateAgent();
+      const agentId = await this.getOrCreateAgent(userEmail);
       const endTime = performance.now();
       
       const isHealthy = !!agentId;
@@ -728,7 +764,8 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
       this.logResponse(requestId, 'Health Check', isHealthy, {
         agentId,
         duration: Math.round(endTime - startTime) + 'ms',
-        connectionStatus: isHealthy ? 'Connected' : 'Failed'
+        connectionStatus: isHealthy ? 'Connected' : 'Failed',
+        userEmail: userEmail || 'Not provided'
       });
 
       return isHealthy;
@@ -740,11 +777,13 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   }
 
   // Get agent info
-  async getAgentInfo() {
-    const requestId = this.logRequest('Get Agent Info');
+  async getAgentInfo(userEmail?: string) {
+    const requestId = this.logRequest('Get Agent Info', {
+      userEmail: userEmail || 'Not provided'
+    });
 
     try {
-      const agentId = await this.getOrCreateAgent();
+      const agentId = await this.getOrCreateAgent(userEmail);
       
       const startTime = performance.now();
       const agentInfo = await this.client.agents.retrieve(agentId);
