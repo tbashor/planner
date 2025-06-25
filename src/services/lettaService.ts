@@ -268,35 +268,29 @@ class LettaService {
         responseId: response.id || 'No ID'
       });
 
-      // Extract the assistant's message from the response
-      const assistantMessages = response.messages.filter((msg) => {
-        if ('role' in msg && msg.role === 'assistant') {
-          return true;
-        }
-        return false;
+      // Log the full response structure for debugging
+      console.log('🔍 Full Letta response structure:', {
+        hasMessages: !!response.messages,
+        messageCount: response.messages?.length || 0,
+        messages: response.messages?.map((msg, index) => ({
+          index,
+          role: 'role' in msg ? msg.role : 'unknown',
+          hasContent: 'content' in msg && !!msg.content,
+          contentType: 'content' in msg ? typeof msg.content : 'none',
+          contentPreview: 'content' in msg && msg.content ? 
+            (typeof msg.content === 'string' ? 
+              msg.content.substring(0, 100) + '...' : 
+              'Complex content') : 'No content'
+        }))
       });
-      
-      let responseMessage = 'I received your message, but I need more information to help you.';
-      if (assistantMessages.length > 0) {
-        const lastMessage = assistantMessages[assistantMessages.length - 1];
-        if ('content' in lastMessage && lastMessage.content) {
-          responseMessage = typeof lastMessage.content === 'string' 
-            ? lastMessage.content 
-            : Array.isArray(lastMessage.content) 
-              ? lastMessage.content.map((c) => {
-                  if (typeof c === 'string') return c;
-                  if (typeof c === 'object' && c && 'text' in c) return (c as { text: string }).text;
-                  if (typeof c === 'object' && c && 'content' in c) return (c as { content: string }).content;
-                  return '';
-                }).join(' ')
-              : responseMessage;
-        }
-      }
+
+      // Extract the assistant's message from the response with improved logic
+      const responseMessage = this.extractAssistantMessage(response);
 
       // Log the incoming message
       this.logConversation('receive', responseMessage, {
-        assistantMessageCount: assistantMessages.length,
-        totalResponseMessages: response.messages?.length || 0
+        extractedFromMessages: response.messages?.length || 0,
+        finalMessageLength: responseMessage.length
       });
 
       // Process the response and try to extract structured data
@@ -330,6 +324,95 @@ class LettaService {
         action: undefined,
       };
     }
+  }
+
+  /**
+   * Extract assistant message from Letta response with improved logic
+   */
+  private extractAssistantMessage(response: any): string {
+    console.log('🔍 Extracting assistant message from response...');
+    
+    if (!response.messages || !Array.isArray(response.messages)) {
+      console.warn('⚠️ No messages array in response');
+      return 'I received your message, but I need more information to help you.';
+    }
+
+    // Filter for assistant messages
+    const assistantMessages = response.messages.filter((msg: any) => {
+      const isAssistant = 'role' in msg && msg.role === 'assistant';
+      console.log('📝 Message analysis:', {
+        hasRole: 'role' in msg,
+        role: 'role' in msg ? msg.role : 'none',
+        isAssistant,
+        hasContent: 'content' in msg && !!msg.content,
+        contentType: 'content' in msg ? typeof msg.content : 'none'
+      });
+      return isAssistant;
+    });
+
+    console.log('🎯 Found assistant messages:', assistantMessages.length);
+
+    if (assistantMessages.length === 0) {
+      console.warn('⚠️ No assistant messages found in response');
+      return 'I received your message, but I need more information to help you.';
+    }
+
+    // Get the last assistant message
+    const lastMessage = assistantMessages[assistantMessages.length - 1];
+    
+    if (!('content' in lastMessage) || !lastMessage.content) {
+      console.warn('⚠️ Last assistant message has no content');
+      return 'I received your message, but I need more information to help you.';
+    }
+
+    // Handle different content types
+    let extractedContent = '';
+    
+    if (typeof lastMessage.content === 'string') {
+      extractedContent = lastMessage.content;
+      console.log('✅ Extracted string content:', extractedContent.substring(0, 100) + '...');
+    } else if (Array.isArray(lastMessage.content)) {
+      console.log('🔄 Processing array content with', lastMessage.content.length, 'items');
+      
+      extractedContent = lastMessage.content.map((c: any, index: number) => {
+        console.log(`📄 Content item ${index}:`, {
+          type: typeof c,
+          isString: typeof c === 'string',
+          hasText: typeof c === 'object' && c && 'text' in c,
+          hasContent: typeof c === 'object' && c && 'content' in c,
+          preview: typeof c === 'string' ? c.substring(0, 50) + '...' : 'Object'
+        });
+        
+        if (typeof c === 'string') {
+          return c;
+        }
+        if (typeof c === 'object' && c && 'text' in c) {
+          return (c as { text: string }).text;
+        }
+        if (typeof c === 'object' && c && 'content' in c) {
+          return (c as { content: string }).content;
+        }
+        return '';
+      }).filter(Boolean).join(' ');
+      
+      console.log('✅ Extracted array content:', extractedContent.substring(0, 100) + '...');
+    } else {
+      console.warn('⚠️ Unknown content type:', typeof lastMessage.content);
+      extractedContent = 'I received your message, but I need more information to help you.';
+    }
+
+    // Final validation
+    if (!extractedContent || extractedContent.trim().length === 0) {
+      console.warn('⚠️ Extracted content is empty');
+      return 'I received your message, but I need more information to help you.';
+    }
+
+    console.log('🎉 Successfully extracted message:', {
+      length: extractedContent.length,
+      preview: extractedContent.substring(0, 150) + (extractedContent.length > 150 ? '...' : '')
+    });
+
+    return extractedContent.trim();
   }
 
   private buildContextMessage(context?: {
@@ -383,8 +466,7 @@ class LettaService {
       responsePreview: response.substring(0, 150) + (response.length > 150 ? '...' : '')
     });
 
-    // For now, return the response as-is
-    // In the future, you could parse the response for structured data like events or suggestions
+    // Return the actual response from the agent
     return {
       message: response,
       suggestions: [],
