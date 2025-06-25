@@ -339,7 +339,7 @@ class LettaService {
 
     // Filter for assistant messages
     const assistantMessages = response.messages.filter((msg: any) => {
-      const isAssistant = 'role' in msg && msg.role === 'assistant';
+      const isAssistant = msg.messageType === 'assistant_message';
       console.log('📝 Message analysis:', {
         hasRole: 'role' in msg,
         role: 'role' in msg ? msg.role : 'none',
