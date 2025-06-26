@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key } from 'lucide-react';
+import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key, TestTube, Zap } from 'lucide-react';
 import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
+import { serverApiService } from '../../services/serverApiService';
 import { useApp } from '../../contexts/AppContext';
 
 export default function GoogleCalendarAuth() {
@@ -11,6 +12,9 @@ export default function GoogleCalendarAuth() {
   const [error, setError] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<Array<{ id: string; summary: string; primary?: boolean }>>([]);
   const [showConfiguration, setShowConfiguration] = useState(false);
+  const [showComposioTest, setShowComposioTest] = useState(false);
+  const [composioTestResults, setComposioTestResults] = useState<any>(null);
+  const [isTestingComposio, setIsTestingComposio] = useState(false);
 
   useEffect(() => {
     checkAuthenticationStatus();
@@ -130,6 +134,67 @@ export default function GoogleCalendarAuth() {
     }
   };
 
+  const testComposioConnection = async () => {
+    setIsTestingComposio(true);
+    setComposioTestResults(null);
+    setError(null);
+
+    try {
+      console.log('🧪 Testing Composio connection...');
+      
+      // Test server health first
+      const healthCheck = await serverApiService.checkServerHealth();
+      console.log('🏥 Server health:', healthCheck);
+
+      // Test Composio connection
+      const connectionTest = await serverApiService.composioTestConnection();
+      console.log('🔗 Composio test result:', connectionTest);
+
+      // Test Google Calendar connection initiation
+      const googleCalendarTest = await serverApiService.composioConnectGoogleCalendar();
+      console.log('📅 Google Calendar connection test:', googleCalendarTest);
+
+      setComposioTestResults({
+        serverHealth: healthCheck,
+        composioConnection: connectionTest,
+        googleCalendarConnection: googleCalendarTest,
+        timestamp: new Date().toISOString()
+      });
+
+      // Add success message to chat
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `🧪 Composio connection test completed! ${googleCalendarTest.success ? `Google Calendar connection initiated successfully. Redirect URL: ${googleCalendarTest.redirectUrl}` : 'There was an issue with the Google Calendar connection.'}`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+    } catch (err: any) {
+      console.error('❌ Composio test failed:', err);
+      setError(`Composio test failed: ${err.message}`);
+      
+      setComposioTestResults({
+        error: err.message,
+        timestamp: new Date().toISOString()
+      });
+
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `❌ Composio test failed: ${err.message}. Please check the server logs for more details.`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } finally {
+      setIsTestingComposio(false);
+    }
+  };
+
   const getRedirectUriInstructions = () => {
     const config = oauthService.getConfiguration();
     return config.redirectUri;
@@ -164,12 +229,77 @@ export default function GoogleCalendarAuth() {
           <div className="flex items-start space-x-2">
             <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
             <div className="text-xs">
-              <p className="font-medium mb-1">Authentication Error</p>
+              <p className="font-medium mb-1">Error</p>
               <p>{error}</p>
             </div>
           </div>
         </div>
       )}
+
+      {/* Composio Test Section */}
+      <div className={`mb-3 p-3 rounded-lg ${
+        state.isDarkMode ? 'bg-purple-900 bg-opacity-20' : 'bg-purple-50'
+      }`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2">
+            <TestTube className={`h-4 w-4 ${
+              state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
+            }`} />
+            <span className={`text-xs font-medium ${
+              state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
+            }`}>
+              Composio Integration Test
+            </span>
+          </div>
+          <button
+            onClick={() => setShowComposioTest(!showComposioTest)}
+            className={`text-xs underline hover:no-underline ${
+              state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
+            }`}
+          >
+            {showComposioTest ? 'Hide' : 'Show'}
+          </button>
+        </div>
+
+        {showComposioTest && (
+          <div className="space-y-3">
+            <p className={`text-xs ${
+              state.isDarkMode ? 'text-purple-300' : 'text-purple-700'
+            }`}>
+              Test the server-side Composio integration with Google Calendar
+            </p>
+
+            <button
+              onClick={testComposioConnection}
+              disabled={isTestingComposio}
+              className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                isTestingComposio
+                  ? 'opacity-50 cursor-not-allowed'
+                  : state.isDarkMode
+                  ? 'bg-purple-600 text-white hover:bg-purple-700'
+                  : 'bg-purple-500 text-white hover:bg-purple-600'
+              }`}
+            >
+              <Zap className={`h-3 w-3 ${isTestingComposio ? 'animate-spin' : ''}`} />
+              <span>{isTestingComposio ? 'Testing...' : 'Test Composio Connection'}</span>
+            </button>
+
+            {/* Test Results */}
+            {composioTestResults && (
+              <div className={`p-3 rounded-lg text-xs ${
+                state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-gray-100 border border-gray-300'
+              }`}>
+                <div className="font-medium mb-2">Test Results:</div>
+                <pre className={`text-xs overflow-auto max-h-32 ${
+                  state.isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  {JSON.stringify(composioTestResults, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {!isAuthenticated ? (
         <div className="space-y-3">
