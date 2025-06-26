@@ -38,7 +38,7 @@ export class LettaServerService {
       apiKey: process.env.VITE_LETTA_API_KEY || '',
       projectSlug: process.env.VITE_LETTA_PROJECT_SLUG || 'default-project',
       agentId: process.env.VITE_LETTA_AGENT_ID,
-      templateName: process.env.VITE_LETTA_TEMPLATE_NAME || 'cal-planner-agent:latest',
+      templateName: process.env.VITE_LETTA_TEMPLATE_NAME || 'memgpt_chat',
     };
     
     this.client = new LettaClient({
@@ -113,6 +113,16 @@ export class LettaServerService {
   }
 
   /**
+   * Check if error is related to OpenAI function schema issues
+   */
+  private isSchemaError(error: any): boolean {
+    const errorMessage = error?.message || '';
+    return errorMessage.includes('Invalid schema') || 
+           errorMessage.includes('invalid_function_parameters') ||
+           errorMessage.includes('Bad request to OpenAI');
+  }
+
+  /**
    * Get helpful error message for agent limit issues
    */
   private getAgentLimitErrorMessage(): string {
@@ -130,6 +140,26 @@ Alternatively, you can:
 - 💳 Upgrade your Letta Cloud plan for more agents
 
 The AI assistant will work normally once you configure an existing agent ID.`;
+  }
+
+  /**
+   * Get helpful error message for schema issues
+   */
+  private getSchemaErrorMessage(): string {
+    return `🔧 OpenAI Function Schema Error
+
+There's an issue with the agent's tool definitions. This is likely due to:
+
+1. 📋 Using a template with invalid Google Calendar tool schemas
+2. 🔧 OpenAI API validation rejecting malformed function parameters
+3. 🛠️ Tool definitions missing required schema properties
+
+To resolve this:
+1. 🎯 Use a simpler template like 'memgpt_chat' instead of 'cal-planner-agent:latest'
+2. 🔄 Create an agent without Google Calendar tools initially
+3. 📞 Contact Letta support if the template should work
+
+The AI assistant will work for basic chat without calendar tools.`;
   }
 
   /**
@@ -225,6 +255,17 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       }
     } catch (error) {
       this.logResponse(requestId, 'Agent Creation', false, {}, error);
+      
+      // Check if this is a schema error
+      if (this.isSchemaError(error)) {
+        this.agentCreationFailed = true;
+        this.lastError = this.getSchemaErrorMessage();
+        
+        console.error('🔧 OpenAI function schema error detected!');
+        console.error(this.lastError);
+        
+        throw new Error(this.lastError);
+      }
       
       // Check if this is an agent limit error
       if (this.isAgentLimitError(error)) {
@@ -333,7 +374,9 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       // Return a more helpful fallback response based on the error type
       let fallbackMessage = "I'm having trouble connecting to my AI assistant right now.";
       
-      if (this.isAgentLimitError(error)) {
+      if (this.isSchemaError(error)) {
+        fallbackMessage = this.getSchemaErrorMessage();
+      } else if (this.isAgentLimitError(error)) {
         fallbackMessage = this.getAgentLimitErrorMessage();
       } else if (!this.config.apiKey) {
         fallbackMessage = "Please configure your Letta API key in the .env file to enable AI assistance.";
