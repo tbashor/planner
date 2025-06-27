@@ -96,7 +96,7 @@ class ServerApiService {
   }
 
   /**
-   * Connect user's Google Calendar to server integration
+   * Connect user's Google Calendar to server integration with user-specific agent
    */
   async connectUserGoogleCalendar(
     userEmail: string,
@@ -104,6 +104,8 @@ class ServerApiService {
     refreshToken?: string,
     expiresIn?: number
   ): Promise<UserGoogleCalendarConnectionResponse> {
+    console.log(`🔗 Connecting ${userEmail}'s Google Calendar to user-specific agent`);
+    
     return this.makeRequest('/api/user/connect-google-calendar', {
       method: 'POST',
       body: JSON.stringify({ 
@@ -116,9 +118,11 @@ class ServerApiService {
   }
 
   /**
-   * Letta service methods
+   * Letta service methods with user-specific context
    */
   async lettaHealthCheck(userEmail?: string): Promise<LettaHealthResponse> {
+    console.log(`🏥 Checking Letta health for user: ${userEmail || 'anonymous'}`);
+    
     return this.makeRequest('/api/letta/health-check', {
       method: 'POST',
       body: JSON.stringify({ userEmail }),
@@ -134,6 +138,9 @@ class ServerApiService {
       userEmail?: string;
     }
   ): Promise<LettaMessageResponse> {
+    const userEmail = context?.userEmail;
+    console.log(`💬 Sending message to Letta agent for user: ${userEmail || 'anonymous'}`);
+    
     return this.makeRequest('/api/letta/send-message', {
       method: 'POST',
       body: JSON.stringify({ 
@@ -141,6 +148,7 @@ class ServerApiService {
         context: {
           ...context,
           currentDate: context?.currentDate?.toISOString(),
+          userEmail: userEmail // Ensure user email is always included
         }
       }),
     });
@@ -152,6 +160,8 @@ class ServerApiService {
     currentDate: Date,
     userEmail?: string
   ): Promise<{ success: boolean; suggestions: any[]; error?: string; timestamp: string }> {
+    console.log(`💡 Generating suggestions for user: ${userEmail || 'anonymous'}`);
+    
     return this.makeRequest('/api/letta/generate-suggestions', {
       method: 'POST',
       body: JSON.stringify({ 

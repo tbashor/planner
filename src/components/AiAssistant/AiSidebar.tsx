@@ -27,31 +27,48 @@ export default function AiSidebar() {
   const [isProcessingMessage, setIsProcessingMessage] = useState(false);
   const [isLettaConnected, setIsLettaConnected] = useState(false);
   const [lettaConnectionError, setLettaConnectionError] = useState<string | null>(null);
+  const [currentUserAgent, setCurrentUserAgent] = useState<string | null>(null);
 
-  // Check Letta agent connection on component mount
+  // Check Letta agent connection on component mount and when user changes
   useEffect(() => {
     checkLettaConnection();
-  }, []);
+  }, [state.user?.email]);
 
   const checkLettaConnection = async () => {
     try {
-      // Pass user email for agent naming if available
+      // Always pass user email for user-specific agent connection
       const userEmail = state.user?.email;
+      if (!userEmail) {
+        setIsLettaConnected(false);
+        setLettaConnectionError('Please complete onboarding to get your personal AI agent');
+        setCurrentUserAgent(null);
+        return;
+      }
+
+      console.log(`🔍 Checking Letta connection for user: ${userEmail}`);
       const isHealthy = await lettaService.healthCheck(userEmail);
       setIsLettaConnected(isHealthy);
       
-      if (!isHealthy) {
+      if (isHealthy) {
+        // Get the user-specific agent ID
+        const agentId = lettaService.getCurrentAgentId(userEmail);
+        setCurrentUserAgent(agentId);
+        setLettaConnectionError(null);
+        console.log(`✅ Connected to user-specific agent for ${userEmail}:`, agentId);
+      } else {
         // Get the specific error message from the Letta service
         const lastError = lettaService.getLastError();
-        setLettaConnectionError(lastError || 'Unable to connect to Letta agent');
-      } else {
-        setLettaConnectionError(null);
+        setLettaConnectionError(lastError || 'Unable to connect to your personal Letta agent');
+        setCurrentUserAgent(null);
+        console.warn(`❌ Failed to connect to agent for ${userEmail}`);
       }
     } catch (error) {
       setIsLettaConnected(false);
+      setCurrentUserAgent(null);
       // Get the specific error message from the Letta service
       const lastError = lettaService.getLastError();
-      setLettaConnectionError(lastError || 'Letta agent connection failed');
+      setLettaConnectionError(lastError || 'Personal Letta agent connection failed');
+      console.error(`❌ Error checking Letta connection for ${state.user?.email}:`, error);
     }
   };
 
@@ -60,6 +77,21 @@ export default function AiSidebar() {
     if (!chatInput.trim()) return;
 
     const userMessage = chatInput.trim();
+    const userEmail = state.user?.email;
+
+    if (!userEmail) {
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: 'Please complete onboarding first to get your personal AI assistant.',
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
     setIsProcessingMessage(true);
 
     // Add user message with unique ID
@@ -76,12 +108,14 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      // Send message to Letta agent with user email for context
+      console.log(`💬 Sending message to user-specific agent for ${userEmail}`);
+      
+      // Send message to user-specific Letta agent
       const lettaResponse = await lettaService.sendMessage(userMessage, {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
-        userEmail: state.user?.email,
+        userEmail: userEmail, // Always include user email for user-specific agent
       });
 
       // If Letta returned a parsed event, add it to the calendar
@@ -113,14 +147,14 @@ export default function AiSidebar() {
       }, 500);
 
     } catch (error) {
-      console.error('Error processing message with Letta:', error);
+      console.error(`Error processing message with user-specific Letta agent for ${userEmail}:`, error);
       setTimeout(() => {
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: "I'm having trouble processing that request right now. Please try again or check your connection to the AI assistant.",
+            content: "I'm having trouble processing that request with your personal agent right now. Please try again or check your connection to the AI assistant.",
             timestamp: new Date().toISOString(),
           },
         });
@@ -157,6 +191,20 @@ export default function AiSidebar() {
   const handleGenerateNewIdeas = async () => {
     if (!state.user?.preferences) return;
 
+    const userEmail = state.user?.email;
+    if (!userEmail) {
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: 'Please complete onboarding first to get personalized suggestions.',
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
     setIsGenerating(true);
 
     // Clear existing suggestions
@@ -165,12 +213,14 @@ export default function AiSidebar() {
     });
 
     try {
-      // Generate new suggestions using Letta agent with user email
+      console.log(`💡 Generating suggestions for user: ${userEmail}`);
+      
+      // Generate new suggestions using user-specific Letta agent
       const newSuggestions = await lettaService.generateSuggestions(
         state.events,
         state.user!.preferences,
         new Date(),
-        state.user?.email
+        userEmail // Always include user email for user-specific suggestions
       );
 
       newSuggestions.forEach(suggestion => {
@@ -183,20 +233,20 @@ export default function AiSidebar() {
         payload: {
           id: `ai_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `✨ I've generated ${newSuggestions.length} new personalized suggestions based on your preferences! These are tailored to your focus areas: ${state.user!.preferences.focusAreas?.join(', ') || 'your goals'}. Check them out below!`,
+          content: `✨ I've generated ${newSuggestions.length} new personalized suggestions using your dedicated agent! These are tailored to your focus areas: ${state.user!.preferences.focusAreas?.join(', ') || 'your goals'}. Check them out below!`,
           timestamp: new Date().toISOString(),
         },
       });
 
       setIsGenerating(false);
     } catch (error) {
-      console.error('Error generating suggestions:', error);
+      console.error(`Error generating suggestions for ${userEmail}:`, error);
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `ai_error_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: "I had trouble generating new suggestions. Please try again later.",
+          content: "I had trouble generating new suggestions with your personal agent. Please try again later.",
           timestamp: new Date().toISOString(),
         },
       });
@@ -222,7 +272,7 @@ export default function AiSidebar() {
             <h2 className={`font-semibold ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Letta Assistant
+              Personal AI Agent
             </h2>
           </div>
           <div className="flex items-center space-x-1">
@@ -248,12 +298,18 @@ export default function AiSidebar() {
           </div>
         </div>
         
-        {/* User Info */}
-        {state.user?.email && isLettaConnected && (
+        {/* User-Specific Agent Info */}
+        {state.user?.email && (
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <span>Agent: planner-{state.user.email}</span>
+            <div>User: {state.user.email}</div>
+            {currentUserAgent && (
+              <div>Agent: {currentUserAgent}</div>
+            )}
+            {isLettaConnected && (
+              <div className="text-green-500 mt-1">✓ Personal agent active</div>
+            )}
           </div>
         )}
         
@@ -298,12 +354,13 @@ export default function AiSidebar() {
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Start a conversation with your Letta assistant</p>
+              <p className="text-sm">Start a conversation with your personal AI agent</p>
               <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
-              {state.user?.email && (
-                <p className="text-xs mt-2 opacity-75">
-                  Your agent: planner-{state.user.email}
-                </p>
+              {state.user?.email && currentUserAgent && (
+                <div className="text-xs mt-2 opacity-75">
+                  <p>Your personal agent: {currentUserAgent}</p>
+                  <p>Connected to: {state.user.email}</p>
+                </div>
               )}
             </div>
           )}
@@ -344,7 +401,7 @@ export default function AiSidebar() {
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">Letta is thinking...</span>
+                  <span className="text-xs opacity-70">Your personal agent is thinking...</span>
                 </div>
               </div>
             </div>
@@ -360,33 +417,39 @@ export default function AiSidebar() {
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder={isLettaConnected ? "Ask Letta to manage your calendar..." : "Letta agent is offline"}
-              disabled={isProcessingMessage || !isLettaConnected}
+              placeholder={
+                !state.user?.email 
+                  ? "Complete onboarding to get your personal agent..."
+                  : isLettaConnected 
+                    ? "Ask your personal agent to manage your calendar..." 
+                    : "Personal agent is offline"
+              }
+              disabled={isProcessingMessage || !isLettaConnected || !state.user?.email}
               className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 state.isDarkMode
                   ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                   : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-              } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isProcessingMessage || !isLettaConnected || !state.user?.email) ? 'opacity-50 cursor-not-allowed' : ''}`}
             />
             {state.user?.preferences.voiceInput && (
               <button
                 type="button"
                 onClick={handleVoiceInput}
-                disabled={isProcessingMessage || !isLettaConnected}
+                disabled={isProcessingMessage || !isLettaConnected || !state.user?.email}
                 className={`p-2 rounded-lg transition-colors duration-200 ${
                   isListening
                     ? 'bg-red-500 text-white'
                     : state.isDarkMode
                     ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                } ${(isProcessingMessage || !isLettaConnected) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${(isProcessingMessage || !isLettaConnected || !state.user?.email) ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Mic className="h-4 w-4" />
               </button>
             )}
             <button
               type="submit"
-              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected}
+              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected || !state.user?.email}
               className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
             >
               <Send className="h-4 w-4" />
@@ -397,10 +460,12 @@ export default function AiSidebar() {
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            {isLettaConnected ? (
+            {!state.user?.email ? (
+              <p>🔐 Complete onboarding to get your personal AI agent</p>
+            ) : isLettaConnected ? (
               <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
             ) : (
-              <p>🔌 Connect to Letta agent to start managing your calendar with AI</p>
+              <p>🔌 Connect to your personal Letta agent to start managing your calendar with AI</p>
             )}
           </div>
         </div>
@@ -418,14 +483,14 @@ export default function AiSidebar() {
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Letta Suggestions
+              Personal Suggestions
             </h3>
           </div>
           <button
             onClick={handleGenerateNewIdeas}
-            disabled={isGenerating || !state.user?.preferences || !isLettaConnected}
+            disabled={isGenerating || !state.user?.preferences || !isLettaConnected || !state.user?.email}
             className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              (isGenerating || !isLettaConnected)
+              (isGenerating || !isLettaConnected || !state.user?.email)
                 ? 'opacity-50 cursor-not-allowed'
                 : state.isDarkMode
                 ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -443,10 +508,12 @@ export default function AiSidebar() {
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              {isLettaConnected ? (
-                <p className="text-xs">Click "Generate" for personalized suggestions from Letta</p>
+              {!state.user?.email ? (
+                <p className="text-xs">Complete onboarding to get personal suggestions</p>
+              ) : isLettaConnected ? (
+                <p className="text-xs">Click "Generate" for personalized suggestions from your agent</p>
               ) : (
-                <p className="text-xs">Connect to Letta agent to get AI suggestions</p>
+                <p className="text-xs">Connect to your personal agent to get AI suggestions</p>
               )}
             </div>
           ) : (

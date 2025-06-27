@@ -19,7 +19,7 @@ class LettaService {
   private config: LettaConfig;
   private client: LettaClient;
   private conversationHistory: LettaMessage[] = [];
-  private currentAgentId: string | null = null;
+  private userAgentMap: Map<string, string> = new Map(); // Map user email to agent ID
   private requestCounter = 0;
   private agentCreationFailed = false;
   private lastError: string | null = null;
@@ -41,7 +41,7 @@ class LettaService {
     console.log('- Base URL:', config.baseUrl);
     console.log('- Project Slug:', config.projectSlug);
     console.log('- Template:', config.templateName);
-    console.log('- Agent ID:', config.agentId || 'Will be created');
+    console.log('- Agent ID:', config.agentId || 'Will be created per user');
     console.log('- API Key:', config.apiKey ? 'Configured ✅' : 'Not configured ❌');
     
     if (!config.apiKey) {
@@ -60,7 +60,8 @@ class LettaService {
     console.log('📤 Request Details:');
     console.log('- Timestamp:', new Date().toISOString());
     console.log('- Operation:', operation);
-    console.log('- Agent ID:', this.currentAgentId || 'Not set');
+    console.log('- User Email:', details.userEmail || 'Not provided');
+    console.log('- Agent ID:', details.agentId || 'Not set');
     
     if (Object.keys(details).length > 0) {
       console.log('- Additional Details:', details);
@@ -101,6 +102,7 @@ class LettaService {
     console.log('- Content:', message.substring(0, 200) + (message.length > 200 ? '...' : ''));
     console.log('- Full Length:', message.length, 'characters');
     console.log('- Timestamp:', new Date().toISOString());
+    console.log('- User Email:', context?.userEmail || 'Not provided');
     
     if (context) {
       console.log('- Context:', context);
@@ -122,7 +124,7 @@ class LettaService {
     // Reset error states when config is updated
     this.agentCreationFailed = false;
     this.lastError = null;
-    this.currentAgentId = null;
+    this.userAgentMap.clear();
     
     console.log('✅ Letta configuration updated successfully');
   }
@@ -185,96 +187,103 @@ The AI assistant will work normally once you configure an existing agent ID.`;
   /**
    * Generate agent name based on user email
    */
-  private generateAgentName(userEmail?: string): string {
-    if (userEmail) {
-      return `planner-${userEmail}`;
-    }
-    
-    // Fallback if no user email is available
-    return `planner-${Date.now()}`;
+  private generateAgentName(userEmail: string): string {
+    // Create a unique agent name for this user
+    const sanitizedEmail = userEmail.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    return `calendar-agent-${sanitizedEmail}`;
   }
 
   /**
-   * Get or create an agent for the current session
+   * Get user-specific agent ID from cache or create new one
    */
-  private async getOrCreateAgent(userEmail?: string): Promise<string> {
+  private async getUserSpecificAgent(userEmail: string): Promise<string> {
+    if (!userEmail) {
+      throw new Error('User email is required for agent connection');
+    }
+
+    // Check if we already have an agent for this user
+    const cachedAgentId = this.userAgentMap.get(userEmail);
+    if (cachedAgentId) {
+      console.log(`🔄 Using cached agent for ${userEmail}:`, cachedAgentId);
+      return cachedAgentId;
+    }
+
     // If we previously failed to create an agent due to limits, don't try again
     if (this.agentCreationFailed) {
       throw new Error(this.lastError || 'Agent creation previously failed due to account limits');
     }
 
-    if (this.currentAgentId) {
-      console.log('🔄 Using cached agent ID:', this.currentAgentId);
-      return this.currentAgentId;
-    }
-
-    // If we have a specific agent ID, use it
+    // If we have a specific agent ID in config, use it for all users (fallback)
     if (this.config.agentId) {
-      const requestId = this.logRequest('Agent Retrieval', { agentId: this.config.agentId });
+      const requestId = this.logRequest('Agent Retrieval', { 
+        agentId: this.config.agentId,
+        userEmail 
+      });
       
       try {
         const startTime = performance.now();
         const agent = await this.client.agents.retrieve(this.config.agentId);
         const endTime = performance.now();
         
-        this.currentAgentId = this.config.agentId;
+        // Cache this agent for the user
+        this.userAgentMap.set(userEmail, this.config.agentId);
         
         this.logResponse(requestId, 'Agent Retrieval', true, {
           agentId: agent.id,
           agentName: agent.name,
+          userEmail,
           duration: Math.round(endTime - startTime) + 'ms'
         });
         
-        console.log('✅ Using existing agent:', this.config.agentId);
-        return this.currentAgentId;
+        console.log(`✅ Using configured agent for ${userEmail}:`, this.config.agentId);
+        return this.config.agentId;
       } catch (error) {
         this.logResponse(requestId, 'Agent Retrieval', false, {}, error);
-        console.warn('⚠️ Specified agent not found, will try to create new one:', error);
+        console.warn(`⚠️ Configured agent not found for ${userEmail}, will try to create new one:`, error);
       }
     }
 
-    // Create a new agent from template
+    // Create a new user-specific agent
     const agentName = this.generateAgentName(userEmail);
-    const requestId = this.logRequest('Agent Creation', { 
+    const requestId = this.logRequest('User-Specific Agent Creation', { 
       templateName: this.config.templateName,
       projectSlug: this.config.projectSlug,
       agentName: agentName,
-      userEmail: userEmail || 'Not provided'
+      userEmail: userEmail
     });
     
     try {
-      console.log('🔄 Creating new agent from template:', this.config.templateName);
-      console.log('📧 Agent name will be:', agentName);
+      console.log(`🔄 Creating new agent for user ${userEmail}:`, agentName);
       
       const startTime = performance.now();
       const response = await this.client.agents.create({
         name: agentName,
-        description: `AI assistant for calendar management and scheduling${userEmail ? ` for ${userEmail}` : ''}`,
+        description: `AI calendar assistant for ${userEmail} - manages personal calendar, scheduling, and productivity optimization`,
         fromTemplate: this.config.templateName,
       });
       const endTime = performance.now();
 
       if (response && response.id) {
-        this.currentAgentId = response.id;
+        // Cache the agent for this user
+        this.userAgentMap.set(userEmail, response.id);
         
-        this.logResponse(requestId, 'Agent Creation', true, {
+        this.logResponse(requestId, 'User-Specific Agent Creation', true, {
           agentId: response.id,
           agentName: response.name,
-          userEmail: userEmail || 'Not provided',
+          userEmail: userEmail,
           duration: Math.round(endTime - startTime) + 'ms'
         });
         
-        console.log('✅ Created new agent:', this.currentAgentId);
+        console.log(`✅ Created new agent for ${userEmail}:`, response.id);
         console.log('📧 Agent name:', agentName);
-        console.log('💡 To avoid creating new agents in the future, add this to your .env file:');
-        console.log(`   VITE_LETTA_AGENT_ID=${this.currentAgentId}`);
+        console.log('🔗 This agent is now linked to the user\'s Google Calendar account');
         
-        return this.currentAgentId;
+        return response.id;
       } else {
         throw new Error('No agent ID returned from agent creation');
       }
     } catch (error) {
-      this.logResponse(requestId, 'Agent Creation', false, {}, error);
+      this.logResponse(requestId, 'User-Specific Agent Creation', false, {}, error);
       
       // Check if this is an agent limit error
       if (this.isAgentLimitError(error)) {
@@ -290,8 +299,8 @@ The AI assistant will work normally once you configure an existing agent ID.`;
         throw new Error(this.lastError);
       }
       
-      console.error('❌ Failed to create agent:', error);
-      throw new Error(`Failed to create agent: ${error}`);
+      console.error(`❌ Failed to create agent for ${userEmail}:`, error);
+      throw new Error(`Failed to create agent for ${userEmail}: ${error}`);
     }
   }
 
@@ -304,35 +313,39 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       userEmail?: string;
     }
   ): Promise<LettaResponse> {
+    const userEmail = context?.userEmail;
+    if (!userEmail) {
+      throw new Error('User email is required for personalized agent interaction');
+    }
+
     const requestId = this.logRequest('Send Message', {
       messageLength: message.length,
       hasContext: !!context,
       contextEvents: context?.events?.length || 0,
       hasPreferences: !!context?.preferences,
-      userEmail: context?.userEmail || 'Not provided'
+      userEmail: userEmail
     });
 
     try {
-      // Ensure we have an agent (pass user email for agent naming)
-      const agentId = await this.getOrCreateAgent(context?.userEmail);
+      // Get user-specific agent
+      const agentId = await this.getUserSpecificAgent(userEmail);
 
       // Log the outgoing message
       this.logConversation('send', message, {
         agentId,
         contextProvided: !!context,
-        userEmail: context?.userEmail || 'Not provided'
+        userEmail: userEmail
       });
 
-      // Add user message to conversation history
+      // Add user message to conversation history (user-specific)
       const userMessage: LettaMessage = {
         role: 'user',
         content: message,
         timestamp: new Date().toISOString(),
       };
-      this.conversationHistory.push(userMessage);
 
-      // Create the context message to include calendar context
-      const contextInfo = this.buildContextMessage(context);
+      // Create enhanced context message that includes user identity
+      const contextInfo = this.buildUserSpecificContextMessage(context, userEmail);
       
       // Prepare messages for Letta API
       const messages: Letta.MessageCreate[] = [
@@ -349,19 +362,21 @@ The AI assistant will work normally once you configure an existing agent ID.`;
           content: contextInfo,
         });
         
-        console.log('📋 Context added to message:', {
+        console.log('📋 User-specific context added to message:', {
+          userEmail,
           contextLength: contextInfo.length,
           contextPreview: contextInfo.substring(0, 100) + '...'
         });
       }
 
-      console.log('📤 Sending message to Letta agent:', {
+      console.log('📤 Sending message to user-specific Letta agent:', {
         agentId,
+        userEmail,
         messageCount: messages.length,
         totalCharacters: messages.reduce((sum, msg) => sum + msg.content.length, 0)
       });
 
-      // Send message to Letta agent using the SDK
+      // Send message to user-specific Letta agent
       const startTime = performance.now();
       const response = await this.client.agents.messages.create(agentId, {
         messages: messages,
@@ -369,62 +384,41 @@ The AI assistant will work normally once you configure an existing agent ID.`;
       });
       const endTime = performance.now();
 
-      console.log('📥 Received response from Letta:', {
+      console.log('📥 Received response from user-specific Letta agent:', {
+        userEmail,
         responseTime: Math.round(endTime - startTime) + 'ms',
         messageCount: response.messages?.length || 0,
         responseId: response.id || 'No ID'
       });
 
-      // Log the full response structure for debugging
-      console.log('🔍 Full Letta response structure:', {
-        hasMessages: !!response.messages,
-        messageCount: response.messages?.length || 0,
-        messages: response.messages?.map((msg, index) => ({
-          index,
-          role: 'role' in msg ? msg.role : 'unknown',
-          hasContent: 'content' in msg && !!msg.content,
-          contentType: 'content' in msg ? typeof msg.content : 'none',
-          contentPreview: 'content' in msg && msg.content ? 
-            (typeof msg.content === 'string' ? 
-              msg.content.substring(0, 100) + '...' : 
-              'Complex content') : 'No content'
-        }))
-      });
-
-      // Extract the assistant's message from the response with improved logic
+      // Extract the assistant's message from the response
       const responseMessage = this.extractAssistantMessage(response);
 
       // Log the incoming message
       this.logConversation('receive', responseMessage, {
         extractedFromMessages: response.messages?.length || 0,
-        finalMessageLength: responseMessage.length
+        finalMessageLength: responseMessage.length,
+        userEmail
       });
 
       // Process the response and try to extract structured data
       const lettaResponse = this.processLettaResponse(responseMessage);
 
-      // Add assistant message to conversation history
-      const assistantMessage: LettaMessage = {
-        role: 'assistant',
-        content: lettaResponse.message,
-        timestamp: new Date().toISOString(),
-      };
-      this.conversationHistory.push(assistantMessage);
-
       this.logResponse(requestId, 'Send Message', true, {
+        userEmail,
         responseLength: lettaResponse.message.length,
         suggestionsCount: lettaResponse.suggestions?.length || 0,
         eventsCount: lettaResponse.events?.length || 0,
-        conversationLength: this.conversationHistory.length
+        agentId
       });
 
       return lettaResponse;
     } catch (error) {
-      this.logResponse(requestId, 'Send Message', false, {}, error);
-      console.error('❌ Error communicating with Letta agent:', error);
+      this.logResponse(requestId, 'Send Message', false, { userEmail }, error);
+      console.error(`❌ Error communicating with Letta agent for ${userEmail}:`, error);
       
       // Return a more helpful fallback response based on the error type
-      let fallbackMessage = "I'm having trouble connecting to my AI assistant right now.";
+      let fallbackMessage = `I'm having trouble connecting to your personal AI assistant right now.`;
       
       if (this.isAgentLimitError(error)) {
         fallbackMessage = this.getAgentLimitErrorMessage();
@@ -447,7 +441,7 @@ The AI assistant will work normally once you configure an existing agent ID.`;
    * Extract assistant message from Letta response with improved logic
    */
   private extractAssistantMessage(response: any): string {
-    console.log('🔍 Extracting assistant message from response...',response);
+    console.log('🔍 Extracting assistant message from response...');
     
     if (!response.messages || !Array.isArray(response.messages)) {
       console.warn('⚠️ No messages array in response');
@@ -532,51 +526,60 @@ The AI assistant will work normally once you configure an existing agent ID.`;
     return extractedContent.trim();
   }
 
-  private buildContextMessage(context?: {
+  private buildUserSpecificContextMessage(context?: {
     events?: Event[];
     preferences?: UserPreferences;
     currentDate?: Date;
     userEmail?: string;
-  }): string | null {
-    if (!context) return null;
+  }, userEmail?: string): string | null {
+    if (!context && !userEmail) return null;
 
     const parts: string[] = [];
     
-    if (context.currentDate) {
+    // Add user identity context
+    if (userEmail) {
+      parts.push(`User: ${userEmail}`);
+      parts.push(`This is ${userEmail}'s personal calendar assistant`);
+      parts.push(`All calendar operations should be performed for ${userEmail}'s Google Calendar account`);
+    }
+    
+    if (context?.currentDate) {
       parts.push(`Current date: ${context.currentDate.toISOString().split('T')[0]}`);
     }
 
-    if (context.userEmail) {
-      parts.push(`User email: ${context.userEmail}`);
-    }
-
-    if (context.events && context.events.length > 0) {
+    if (context?.events && context.events.length > 0) {
       const todayEvents = context.events.filter(e => 
         e.date === context.currentDate?.toISOString().split('T')[0]
       );
       if (todayEvents.length > 0) {
-        parts.push(`Today's events: ${todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ')}`);
+        parts.push(`${userEmail}'s today's events: ${todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ')}`);
+      }
+      
+      // Include Google Calendar events specifically
+      const googleEvents = context.events.filter(e => e.id.startsWith('google_'));
+      if (googleEvents.length > 0) {
+        parts.push(`${userEmail} has ${googleEvents.length} Google Calendar events synced`);
       }
     }
 
-    if (context.preferences) {
+    if (context?.preferences) {
       if (context.preferences.focusAreas && context.preferences.focusAreas.length > 0) {
-        parts.push(`User's focus areas: ${context.preferences.focusAreas.join(', ')}`);
+        parts.push(`${userEmail}'s focus areas: ${context.preferences.focusAreas.join(', ')}`);
       }
       if (context.preferences.workingHours) {
-        parts.push(`Working hours: ${context.preferences.workingHours.start} to ${context.preferences.workingHours.end}`);
+        parts.push(`${userEmail}'s working hours: ${context.preferences.workingHours.start} to ${context.preferences.workingHours.end}`);
       }
     }
 
     const contextMessage = parts.length > 0 ? parts.join('\n') : null;
     
     if (contextMessage) {
-      console.log('📋 Built context message:', {
+      console.log('📋 Built user-specific context message:', {
+        userEmail,
         parts: parts.length,
         totalLength: contextMessage.length,
         hasEvents: !!(context?.events?.length),
-        hasPreferences: !!context?.preferences,
-        userEmail: context?.userEmail || 'Not provided'
+        hasPreferences: !!context?.preferences
       });
     }
 
@@ -604,29 +607,34 @@ The AI assistant will work normally once you configure an existing agent ID.`;
     currentDate: Date,
     userEmail?: string
   ): Promise<AiSuggestion[]> {
+    if (!userEmail) {
+      console.warn('⚠️ No user email provided for suggestions generation');
+      return [];
+    }
+
     const requestId = this.logRequest('Generate Suggestions', {
       eventsCount: events.length,
       focusAreas: preferences.focusAreas?.length || 0,
       currentDate: currentDate.toISOString().split('T')[0],
-      userEmail: userEmail || 'Not provided'
+      userEmail: userEmail
     });
 
     try {
-      const agentId = await this.getOrCreateAgent(userEmail);
+      const agentId = await this.getUserSpecificAgent(userEmail);
 
-      const contextMessage = `Please generate 3-5 personalized calendar suggestions based on:
+      const contextMessage = `Please generate 3-5 personalized calendar suggestions for ${userEmail} based on:
 - Current events: ${events.map(e => `${e.date} ${e.startTime}: ${e.title}`).join(', ')}
 - Focus areas: ${preferences.focusAreas?.join(', ') || 'general productivity'}
 - Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
 - Current date: ${currentDate.toISOString().split('T')[0]}
-${userEmail ? `- User: ${userEmail}` : ''}
+- User: ${userEmail}
 
-Return suggestions for productive activities, breaks, or schedule optimizations.`;
+Return suggestions for productive activities, breaks, or schedule optimizations specifically for ${userEmail}'s calendar.`;
 
-      console.log('📤 Generating suggestions with context:', {
+      console.log('📤 Generating user-specific suggestions:', {
         contextLength: contextMessage.length,
         agentId,
-        userEmail: userEmail || 'Not provided'
+        userEmail: userEmail
       });
 
       const startTime = performance.now();
@@ -642,6 +650,7 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
       const endTime = performance.now();
 
       this.logResponse(requestId, 'Generate Suggestions', true, {
+        userEmail,
         duration: Math.round(endTime - startTime) + 'ms',
         suggestionsGenerated: 0 // Will be updated when parsing is implemented
       });
@@ -649,87 +658,13 @@ Return suggestions for productive activities, breaks, or schedule optimizations.
       // For now, return empty array - you could parse the response for structured suggestions
       return [];
     } catch (error) {
-      this.logResponse(requestId, 'Generate Suggestions', false, {}, error);
-      console.error('❌ Error generating suggestions from Letta agent:', error);
+      this.logResponse(requestId, 'Generate Suggestions', false, { userEmail }, error);
+      console.error(`❌ Error generating suggestions from Letta agent for ${userEmail}:`, error);
       return [];
     }
   }
 
-  async parseEventFromMessage(
-    message: string,
-    preferences: UserPreferences,
-    userEmail?: string
-  ): Promise<Event | null> {
-    const requestId = this.logRequest('Parse Event', {
-      messageLength: message.length,
-      hasPreferences: !!preferences,
-      userEmail: userEmail || 'Not provided'
-    });
-
-    try {
-      const agentId = await this.getOrCreateAgent(userEmail);
-
-      const parsePrompt = `Parse this message for calendar event information: "${message}"
-User preferences:
-- Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
-- Focus areas: ${preferences.focusAreas?.join(', ') || 'general'}
-${userEmail ? `- User: ${userEmail}` : ''}
-
-If this is a request to create an event, extract the title, date, start time, end time, and category.
-Respond with event details if found, or "NO_EVENT" if this is not an event creation request.`;
-
-      console.log('📤 Parsing event from message:', {
-        originalMessage: message,
-        promptLength: parsePrompt.length,
-        userEmail: userEmail || 'Not provided'
-      });
-
-      const startTime = performance.now();
-      await this.client.agents.messages.create(agentId, {
-        messages: [
-          {
-            role: 'user',
-            content: parsePrompt,
-          }
-        ],
-        maxSteps: 2,
-      });
-      const endTime = performance.now();
-
-      this.logResponse(requestId, 'Parse Event', true, {
-        duration: Math.round(endTime - startTime) + 'ms',
-        eventParsed: false // Will be updated when parsing is implemented
-      });
-
-      // For now, return null - you could parse the response for event data
-      return null;
-    } catch (error) {
-      this.logResponse(requestId, 'Parse Event', false, {}, error);
-      console.error('❌ Error parsing event from Letta agent:', error);
-      return null;
-    }
-  }
-
-  // Get conversation history
-  getConversationHistory(): LettaMessage[] {
-    console.log('📚 Retrieving conversation history:', {
-      messageCount: this.conversationHistory.length,
-      totalCharacters: this.conversationHistory.reduce((sum, msg) => sum + msg.content.length, 0)
-    });
-    return [...this.conversationHistory];
-  }
-
-  // Clear conversation history
-  clearHistory(): void {
-    const previousCount = this.conversationHistory.length;
-    this.conversationHistory = [];
-    console.log('🧹 Cleared conversation history:', {
-      previousMessageCount: previousCount,
-      currentMessageCount: 0
-    });
-  }
-
-  // Health check using SDK
+  // Health check using SDK with user context
   async healthCheck(userEmail?: string): Promise<boolean> {
     const requestId = this.logRequest('Health Check', {
       hasApiKey: !!this.config.apiKey,
@@ -754,11 +689,18 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
 
       console.log('🏥 Performing Letta health check...');
       
-      // Try to get or create an agent as a health check
+      // If we have a user email, try to get their specific agent
+      let agentId: string;
       const startTime = performance.now();
-      const agentId = await this.getOrCreateAgent(userEmail);
-      const endTime = performance.now();
       
+      if (userEmail) {
+        agentId = await this.getUserSpecificAgent(userEmail);
+      } else {
+        // Fallback to generic agent creation
+        agentId = await this.getUserSpecificAgent('health-check@example.com');
+      }
+      
+      const endTime = performance.now();
       const isHealthy = !!agentId;
       
       this.logResponse(requestId, 'Health Check', isHealthy, {
@@ -770,20 +712,25 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
 
       return isHealthy;
     } catch (error) {
-      this.logResponse(requestId, 'Health Check', false, {}, error);
+      this.logResponse(requestId, 'Health Check', false, { userEmail }, error);
       console.error('❌ Letta agent health check failed:', error);
       return false;
     }
   }
 
-  // Get agent info
+  // Get agent info for specific user
   async getAgentInfo(userEmail?: string) {
+    if (!userEmail) {
+      console.warn('⚠️ No user email provided for agent info');
+      return null;
+    }
+
     const requestId = this.logRequest('Get Agent Info', {
-      userEmail: userEmail || 'Not provided'
+      userEmail: userEmail
     });
 
     try {
-      const agentId = await this.getOrCreateAgent(userEmail);
+      const agentId = await this.getUserSpecificAgent(userEmail);
       
       const startTime = performance.now();
       const agentInfo = await this.client.agents.retrieve(agentId);
@@ -792,51 +739,39 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
       this.logResponse(requestId, 'Get Agent Info', true, {
         agentId: agentInfo.id,
         agentName: agentInfo.name,
+        userEmail,
         duration: Math.round(endTime - startTime) + 'ms'
       });
 
       return agentInfo;
     } catch (error) {
-      this.logResponse(requestId, 'Get Agent Info', false, {}, error);
-      console.error('❌ Error getting agent info:', error);
+      this.logResponse(requestId, 'Get Agent Info', false, { userEmail }, error);
+      console.error(`❌ Error getting agent info for ${userEmail}:`, error);
       return null;
     }
   }
 
-  // List available agents
-  async listAgents() {
-    const requestId = this.logRequest('List Agents');
-
-    try {
-      const startTime = performance.now();
-      const agents = await this.client.agents.list();
-      const endTime = performance.now();
-      
-      this.logResponse(requestId, 'List Agents', true, {
-        agentCount: agents.length,
-        duration: Math.round(endTime - startTime) + 'ms'
-      });
-
-      return agents;
-    } catch (error) {
-      this.logResponse(requestId, 'List Agents', false, {}, error);
-      console.error('❌ Error listing agents:', error);
-      return [];
+  // Get current agent ID for specific user
+  getCurrentAgentId(userEmail?: string): string | null {
+    if (!userEmail) {
+      console.log('🆔 No user email provided for agent ID lookup');
+      return null;
     }
-  }
-
-  // Get current agent ID
-  getCurrentAgentId(): string | null {
-    console.log('🆔 Current agent ID:', this.currentAgentId || 'Not set');
-    return this.currentAgentId;
+    
+    const agentId = this.userAgentMap.get(userEmail) || null;
+    console.log(`🆔 Current agent ID for ${userEmail}:`, agentId || 'Not set');
+    return agentId;
   }
 
   // Get service statistics
   getServiceStats() {
     const stats = {
       requestCount: this.requestCounter,
-      conversationLength: this.conversationHistory.length,
-      currentAgentId: this.currentAgentId,
+      userAgentCount: this.userAgentMap.size,
+      userAgents: Array.from(this.userAgentMap.entries()).map(([email, agentId]) => ({
+        userEmail: email,
+        agentId: agentId
+      })),
       agentCreationFailed: this.agentCreationFailed,
       lastError: this.lastError,
       configurationStatus: {
@@ -865,7 +800,19 @@ Respond with event details if found, or "NO_EVENT" if this is not an event creat
   resetErrorState(): void {
     this.agentCreationFailed = false;
     this.lastError = null;
+    this.userAgentMap.clear();
     console.log('🔄 Reset Letta service error state');
+  }
+
+  // Clear user-specific agent (useful for logout)
+  clearUserAgent(userEmail: string): void {
+    this.userAgentMap.delete(userEmail);
+    console.log(`🧹 Cleared agent for user: ${userEmail}`);
+  }
+
+  // Get all user agents (for debugging)
+  getAllUserAgents(): Map<string, string> {
+    return new Map(this.userAgentMap);
   }
 }
 
