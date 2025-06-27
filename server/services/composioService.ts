@@ -50,7 +50,7 @@ export class ComposioService {
   constructor() {
     // Load configuration from environment variables
     this.config = {
-      baseUrl: process.env.VITE_LETTA_BASE_URL || 'https://api.letta.ai',
+      baseUrl: process.env.VITE_LETTA_BASE_URL || 'https://api.letta.com',
       apiKey: process.env.VITE_LETTA_API_KEY || '',
     };
 
