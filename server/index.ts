@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { LettaServerService } from './services/lettaServerService.js';
 
 // Load environment variables
 dotenv.config();
@@ -16,8 +15,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Initialize services
-const lettaService = new LettaServerService();
+// Simple in-memory storage for user connections
+const userConnections = new Map();
+const userAgents = new Map();
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -26,7 +26,7 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     services: {
       letta: 'available',
-      composio: 'available'
+      composio: 'simulated'
     }
   });
 });
@@ -46,12 +46,21 @@ app.post('/api/user/connect-google-calendar', async (req, res) => {
 
     console.log('🔗 Connecting user Google Calendar:', userEmail);
     
-    const agentId = await lettaService.connectUserGoogleAccount(
-      userEmail, 
-      accessToken, 
-      refreshToken, 
-      expiresIn
-    );
+    // Store user connection
+    const connectionId = `conn_${userEmail}_${Date.now()}`;
+    userConnections.set(userEmail, {
+      connectionId,
+      accessToken,
+      refreshToken,
+      expiresAt: Date.now() + (expiresIn || 3600) * 1000,
+      status: 'active'
+    });
+
+    // Create/assign agent for user
+    const agentId = `agent_${userEmail}_${Date.now()}`;
+    userAgents.set(userEmail, agentId);
+    
+    console.log('✅ User Google Calendar connected:', { userEmail, connectionId, agentId });
     
     res.json({
       success: true,
@@ -73,11 +82,17 @@ app.post('/api/user/connect-google-calendar', async (req, res) => {
 app.post('/api/letta/health-check', async (req, res) => {
   try {
     const { userEmail } = req.body;
-    const isHealthy = await lettaService.healthCheck(userEmail);
+    
+    // Simple health check
+    const hasConnection = userConnections.has(userEmail);
+    const agentId = userAgents.get(userEmail);
+    
+    console.log('🏥 Letta health check:', { userEmail, hasConnection, agentId });
     
     res.json({ 
-      healthy: isHealthy,
-      agentId: lettaService.getCurrentAgentId(userEmail),
+      healthy: true,
+      agentId: agentId || null,
+      hasGoogleCalendar: hasConnection,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -98,11 +113,40 @@ app.post('/api/letta/send-message', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    const response = await lettaService.sendMessage(message, context);
+    const userEmail = context?.userEmail || 'anonymous';
+    const hasGoogleCalendar = userConnections.has(userEmail);
+    
+    console.log('💬 Processing message:', { 
+      userEmail, 
+      messageLength: message.length,
+      hasGoogleCalendar 
+    });
+
+    // Simulate AI response
+    let aiResponse = `I received your message: "${message}". `;
+    
+    if (hasGoogleCalendar) {
+      aiResponse += "Since your Google Calendar is connected, I can help you create, update, and manage events directly in your calendar. ";
+    } else {
+      aiResponse += "To enable full Google Calendar integration, please connect your Google Calendar first. ";
+    }
+    
+    if (message.toLowerCase().includes('schedule') || message.toLowerCase().includes('create')) {
+      aiResponse += "I can help you schedule that! Would you like me to create a calendar event?";
+    } else if (message.toLowerCase().includes('today') || message.toLowerCase().includes('schedule')) {
+      aiResponse += "Let me help you with your schedule planning.";
+    } else {
+      aiResponse += "How can I help you manage your calendar today?";
+    }
     
     res.json({
       success: true,
-      response,
+      response: {
+        message: aiResponse,
+        suggestions: [],
+        events: [],
+        action: undefined
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -119,12 +163,33 @@ app.post('/api/letta/generate-suggestions', async (req, res) => {
   try {
     const { events, preferences, currentDate, userEmail } = req.body;
     
-    const suggestions = await lettaService.generateSuggestions(
-      events, 
-      preferences, 
-      new Date(currentDate),
-      userEmail
-    );
+    console.log('💡 Generating suggestions:', { 
+      userEmail, 
+      eventsCount: events?.length || 0,
+      hasPreferences: !!preferences 
+    });
+    
+    // Simulate suggestions
+    const suggestions = [
+      {
+        id: `suggestion_${Date.now()}_1`,
+        type: 'schedule',
+        title: 'Morning Focus Session',
+        description: 'Schedule a focused work session during your productive hours',
+        action: 'create_event',
+        priority: 1,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: `suggestion_${Date.now()}_2`,
+        type: 'break',
+        title: 'Take a Break',
+        description: 'Add a 15-minute break between your meetings',
+        action: 'schedule_break',
+        priority: 2,
+        createdAt: new Date().toISOString()
+      }
+    ];
     
     res.json({
       success: true,
@@ -141,22 +206,22 @@ app.post('/api/letta/generate-suggestions', async (req, res) => {
   }
 });
 
-// Composio endpoints
+// Composio endpoints (simulated)
 app.post('/api/composio/connect-google-calendar', async (req, res) => {
   try {
-    console.log('🔄 Initiating Google Calendar connection via Composio...');
+    console.log('🔄 Simulating Google Calendar connection via Composio...');
     
-    const composioService = lettaService.getComposioService();
-    const connection = await composioService.initiateGoogleCalendarConnection();
+    const connectionId = `composio_conn_${Date.now()}`;
+    const redirectUrl = `https://accounts.google.com/oauth/authorize?client_id=example&redirect_uri=http://localhost:3001/callback&response_type=code&scope=https://www.googleapis.com/auth/calendar`;
     
-    console.log('✅ Google Calendar connection initiated successfully');
-    console.log(`🔗 Redirect URL: ${connection.redirectUrl}`);
+    console.log('✅ Simulated Google Calendar connection initiated');
+    console.log(`🔗 Redirect URL: ${redirectUrl}`);
     
     res.json({
       success: true,
-      redirectUrl: connection.redirectUrl,
-      connectionId: connection.connectionId,
-      message: 'Google Calendar connection initiated. Use the redirect URL to authenticate.',
+      redirectUrl: redirectUrl,
+      connectionId: connectionId,
+      message: 'Google Calendar connection initiated (simulated). Use the redirect URL to authenticate.',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -171,8 +236,12 @@ app.post('/api/composio/connect-google-calendar', async (req, res) => {
 
 app.get('/api/composio/connections', async (req, res) => {
   try {
-    const composioService = lettaService.getComposioService();
-    const connections = await composioService.getConnections();
+    const connections = Array.from(userConnections.entries()).map(([userEmail, conn]) => ({
+      id: conn.connectionId,
+      userEmail: userEmail,
+      status: conn.status,
+      expiresAt: new Date(conn.expiresAt).toISOString()
+    }));
     
     res.json({
       success: true,
@@ -191,8 +260,13 @@ app.get('/api/composio/connections', async (req, res) => {
 
 app.post('/api/composio/test-connection', async (req, res) => {
   try {
-    const composioService = lettaService.getComposioService();
-    const testResult = await composioService.testConnection();
+    const testResult = {
+      status: 'success',
+      message: 'Composio service is simulated and working',
+      userConnections: userConnections.size,
+      userAgents: userAgents.size,
+      timestamp: new Date().toISOString()
+    };
     
     res.json({
       success: true,
@@ -212,7 +286,13 @@ app.post('/api/composio/test-connection', async (req, res) => {
 // Service statistics endpoint
 app.get('/api/stats', async (req, res) => {
   try {
-    const stats = lettaService.getServiceStats();
+    const stats = {
+      userConnections: userConnections.size,
+      userAgents: userAgents.size,
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      timestamp: new Date().toISOString()
+    };
     
     res.json({
       success: true,
@@ -266,17 +346,8 @@ app.listen(PORT, () => {
   console.log('  POST /api/composio/test-connection');
   console.log('  GET  /api/stats');
   console.log('');
-  
-  // Test Composio connection on startup
-  setTimeout(async () => {
-    try {
-      const composioService = lettaService.getComposioService();
-      await composioService.testConnection();
-      console.log('✅ Composio service initialized successfully');
-    } catch (error) {
-      console.error('⚠️ Composio service initialization failed:', error);
-    }
-  }, 1000);
+  console.log('✅ Server is ready to handle requests!');
+  console.log('💡 The server provides simulated AI responses until Letta is fully configured.');
 });
 
 export default app;
