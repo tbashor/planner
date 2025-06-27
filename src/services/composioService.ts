@@ -220,6 +220,113 @@ class ComposioService {
       return null;
     }
   }
+
+  /**
+   * Open Composio authentication in popup window
+   */
+  openAuthPopup(redirectUrl: string): Window | null {
+    try {
+      console.log('🪟 Opening Composio authentication popup...');
+      
+      const popup = window.open(
+        redirectUrl,
+        'composio-auth',
+        'width=600,height=700,scrollbars=yes,resizable=yes,status=yes,location=yes,toolbar=no,menubar=no'
+      );
+
+      if (!popup) {
+        throw new Error('Failed to open popup window. Please allow popups for this site.');
+      }
+
+      return popup;
+    } catch (error) {
+      console.error('❌ Error opening Composio auth popup:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Monitor popup window and return promise that resolves when authentication is complete
+   */
+  monitorAuthPopup(popup: Window, userEmail: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const checkInterval = 1000; // Check every second
+      const timeout = 5 * 60 * 1000; // 5 minute timeout
+      let elapsed = 0;
+
+      const monitor = setInterval(async () => {
+        try {
+          elapsed += checkInterval;
+
+          // Check if popup is closed
+          if (popup.closed) {
+            clearInterval(monitor);
+            console.log('🪟 Popup closed, checking authentication status...');
+            
+            // Wait a moment for any background processing
+            setTimeout(async () => {
+              try {
+                const testResult = await this.testUserConnection(userEmail);
+                if (testResult.success && testResult.testResult) {
+                  console.log('✅ Composio authentication successful!');
+                  resolve(true);
+                } else {
+                  console.warn('❌ Authentication not completed');
+                  resolve(false);
+                }
+              } catch (error) {
+                console.error('❌ Error checking authentication status:', error);
+                resolve(false);
+              }
+            }, 2000);
+            return;
+          }
+
+          // Check for timeout
+          if (elapsed >= timeout) {
+            clearInterval(monitor);
+            popup.close();
+            console.warn('⏰ Authentication timeout');
+            reject(new Error('Authentication timeout'));
+            return;
+          }
+
+        } catch (error) {
+          // Ignore cross-origin errors when checking popup
+          if (error.name !== 'SecurityError') {
+            console.error('❌ Error monitoring popup:', error);
+          }
+        }
+      }, checkInterval);
+    });
+  }
+
+  /**
+   * Complete Composio authentication flow with popup
+   */
+  async authenticateWithPopup(userEmail: string): Promise<boolean> {
+    try {
+      console.log(`🔐 Starting Composio authentication for: ${userEmail}`);
+      
+      // Setup connection and get redirect URL
+      const result = await this.setupUserConnection(userEmail);
+      
+      if (!result.success || !result.redirectUrl) {
+        throw new Error(result.error || 'Failed to get authentication URL');
+      }
+
+      // Open popup
+      const popup = this.openAuthPopup(result.redirectUrl);
+      
+      // Monitor popup and wait for completion
+      const success = await this.monitorAuthPopup(popup, userEmail);
+      
+      return success;
+    } catch (error) {
+      console.error('❌ Composio popup authentication failed:', error);
+      throw error;
+    }
+  }
 }
 
 export const composioService = new ComposioService();

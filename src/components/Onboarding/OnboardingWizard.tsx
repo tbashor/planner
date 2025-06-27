@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, ExternalLink, RefreshCw } from 'lucide-react';
+import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, ExternalLink, RefreshCw, Calendar, User, AlertCircle } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
+import { googleCalendarService } from '../../services/googleCalendarService';
 import composioService from '../../services/composioService';
 
 interface OnboardingData {
   name: string;
-  email: string; // Real authenticated email from Composio
+  email: string; // Real authenticated email from Google OAuth
   workSchedule: string;
   productiveHours: string[];
   focusAreas: string[];
@@ -21,13 +22,28 @@ interface OnboardingWizardProps {
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const { state } = useApp();
   const [currentStep, setCurrentStep] = useState(1);
-  const [isSettingUpConnection, setIsSettingUpConnection] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [connectionData, setConnectionData] = useState<any>(null);
-  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+  const [googleAuthData, setGoogleAuthData] = useState<{
+    isAuthenticated: boolean;
+    userEmail?: string;
+    userName?: string;
+  }>({
+    isAuthenticated: false,
+  });
+  const [composioStatus, setComposioStatus] = useState<{
+    isConnected: boolean;
+    isConnecting: boolean;
+    error?: string;
+    popupWindow?: Window | null;
+  }>({
+    isConnected: false,
+    isConnecting: false,
+  });
+  
   const [data, setData] = useState<OnboardingData>({
     name: '',
-    email: '', // Will be set from Composio authentication
+    email: '',
     workSchedule: '',
     productiveHours: [],
     focusAreas: [],
@@ -36,23 +52,216 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     goals: '',
   });
 
-  const totalSteps = 8; // Added authentication step
+  const totalSteps = 8;
 
-  // Check if we're returning from Composio authentication
+  // Check for OAuth callback on component mount
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const composioCallback = urlParams.get('composio_callback');
-    const userEmail = urlParams.get('user_email');
-    
-    if (composioCallback === 'success' && userEmail) {
-      console.log('🎉 Returned from Composio authentication for:', userEmail);
-      setConnectionData({ status: 'active', userEmail });
-      updateData('email', userEmail);
-      
-      // Clear URL parameters
-      window.history.replaceState({}, document.title, window.location.pathname);
+    checkForOAuthCallback();
+  }, []);
+
+  // Check Google authentication status
+  useEffect(() => {
+    const isGoogleAuthenticated = googleCalendarService.isAuthenticated();
+    if (isGoogleAuthenticated) {
+      loadGoogleUserInfo();
     }
   }, []);
+
+  // Cleanup popup window on unmount
+  useEffect(() => {
+    return () => {
+      if (composioStatus.popupWindow && !composioStatus.popupWindow.closed) {
+        composioStatus.popupWindow.close();
+      }
+    };
+  }, [composioStatus.popupWindow]);
+
+  const checkForOAuthCallback = async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const state = urlParams.get('state');
+    
+    if (code && state) {
+      console.log('🔍 OAuth callback detected, processing...');
+      setIsAuthenticating(true);
+      
+      try {
+        // This will be handled by the OAuthCallback component
+        // But we can check if we're now authenticated
+        setTimeout(() => {
+          const isAuthenticated = googleCalendarService.isAuthenticated();
+          if (isAuthenticated) {
+            loadGoogleUserInfo();
+          }
+          setIsAuthenticating(false);
+        }, 2000);
+      } catch (error) {
+        console.error('❌ Error processing OAuth callback:', error);
+        setAuthError('Failed to process authentication');
+        setIsAuthenticating(false);
+      }
+    }
+  };
+
+  const loadGoogleUserInfo = async () => {
+    try {
+      const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+      if (userEmail) {
+        console.log('✅ Google user authenticated:', userEmail);
+        
+        // Extract name from email (simple approach)
+        const userName = userEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        
+        setGoogleAuthData({
+          isAuthenticated: true,
+          userEmail,
+          userName,
+        });
+        
+        // Update form data
+        updateData('email', userEmail);
+        updateData('name', userName);
+      }
+    } catch (error) {
+      console.error('❌ Error loading Google user info:', error);
+      setAuthError('Failed to load user information');
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsAuthenticating(true);
+    setAuthError(null);
+    
+    try {
+      const authUrl = await googleCalendarService.getAuthUrl();
+      console.log('🔗 Redirecting to Google OAuth...');
+      window.location.href = authUrl;
+    } catch (error) {
+      console.error('❌ Error initiating Google sign-in:', error);
+      setAuthError('Failed to initiate Google sign-in');
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleComposioConnection = async () => {
+    if (!googleAuthData.userEmail) {
+      setAuthError('Please authenticate with Google first');
+      return;
+    }
+
+    setComposioStatus(prev => ({ ...prev, isConnecting: true, error: undefined }));
+    setAuthError(null);
+
+    try {
+      console.log('🔗 Setting up Composio connection for:', googleAuthData.userEmail);
+      
+      const result = await composioService.setupUserConnection(googleAuthData.userEmail);
+      
+      if (result.success && result.redirectUrl) {
+        console.log('🪟 Opening Composio authentication in popup...');
+        
+        // Open popup window
+        const popup = window.open(
+          result.redirectUrl,
+          'composio-auth',
+          'width=600,height=700,scrollbars=yes,resizable=yes,status=yes,location=yes,toolbar=no,menubar=no'
+        );
+
+        if (!popup) {
+          throw new Error('Failed to open popup window. Please allow popups for this site.');
+        }
+
+        setComposioStatus(prev => ({ 
+          ...prev, 
+          popupWindow: popup,
+          isConnecting: true 
+        }));
+
+        // Monitor popup window
+        const checkPopup = setInterval(async () => {
+          try {
+            // Check if popup is closed
+            if (popup.closed) {
+              clearInterval(checkPopup);
+              console.log('🪟 Popup window closed, checking connection status...');
+              
+              // Wait a moment for any background processing
+              setTimeout(async () => {
+                await checkComposioConnectionStatus();
+              }, 2000);
+            }
+          } catch (error) {
+            // Popup might be on different domain, ignore cross-origin errors
+            console.log('Popup monitoring error (expected):', error);
+          }
+        }, 1000);
+
+        // Timeout after 5 minutes
+        setTimeout(() => {
+          if (!popup.closed) {
+            popup.close();
+            clearInterval(checkPopup);
+            setComposioStatus(prev => ({ 
+              ...prev, 
+              isConnecting: false,
+              error: 'Authentication timeout. Please try again.',
+              popupWindow: null
+            }));
+          }
+        }, 5 * 60 * 1000);
+
+      } else if (result.success && !result.redirectUrl) {
+        // Connection already exists
+        console.log('✅ Composio connection already active');
+        setComposioStatus({ isConnected: true, isConnecting: false });
+      } else {
+        throw new Error(result.error || 'Failed to setup Composio connection');
+      }
+    } catch (error) {
+      console.error('❌ Error setting up Composio connection:', error);
+      setComposioStatus({ 
+        isConnected: false, 
+        isConnecting: false,
+        error: error instanceof Error ? error.message : 'Connection failed'
+      });
+    }
+  };
+
+  const checkComposioConnectionStatus = async () => {
+    if (!googleAuthData.userEmail) return;
+
+    try {
+      console.log('🔍 Checking Composio connection status...');
+      
+      const testResult = await composioService.testUserConnection(googleAuthData.userEmail);
+      
+      if (testResult.success && testResult.testResult) {
+        console.log('✅ Composio connection verified!');
+        setComposioStatus({ 
+          isConnected: true, 
+          isConnecting: false,
+          popupWindow: null
+        });
+        setAuthError(null);
+      } else {
+        console.warn('❌ Composio connection not ready:', testResult.error);
+        setComposioStatus({ 
+          isConnected: false, 
+          isConnecting: false,
+          error: 'Connection not completed. Please try again.',
+          popupWindow: null
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error checking Composio connection:', error);
+      setComposioStatus({ 
+        isConnected: false, 
+        isConnecting: false,
+        error: 'Failed to verify connection',
+        popupWindow: null
+      });
+    }
+  };
 
   const updateData = (field: keyof OnboardingData, value: any) => {
     setData(prev => ({ ...prev, [field]: value }));
@@ -64,87 +273,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       ? currentArray.filter(item => item !== value)
       : [...currentArray, value];
     updateData(field, newArray);
-  };
-
-  const handleSetupComposioConnection = async () => {
-    // Generate a temporary user email for initial setup
-    const tempEmail = `user_${Date.now()}@temp.local`;
-    
-    setIsSettingUpConnection(true);
-    setAuthError(null);
-
-    try {
-      console.log('🔗 Setting up Composio connection for temporary user:', tempEmail);
-      
-      const result = await composioService.setupUserConnection(tempEmail);
-      
-      if (result.success && result.redirectUrl) {
-        console.log('🔗 Composio connection setup successful, redirecting to:', result.redirectUrl);
-        
-        // Add callback parameters to the redirect URL
-        const callbackUrl = new URL(result.redirectUrl);
-        const currentUrl = new URL(window.location.href);
-        
-        // Set up return URL with callback parameters
-        const returnUrl = `${currentUrl.origin}${currentUrl.pathname}?composio_callback=success&user_email=${tempEmail}`;
-        
-        // Store connection data
-        setConnectionData({
-          entityId: result.entityId,
-          connectionId: result.connectionId,
-          status: 'pending',
-          userEmail: tempEmail
-        });
-        
-        console.log('🔄 Redirecting to Composio authentication...');
-        
-        // Redirect to Composio authentication (no popup)
-        window.location.href = result.redirectUrl;
-      } else {
-        throw new Error(result.error || 'Failed to setup Composio connection');
-      }
-    } catch (error) {
-      console.error('❌ Error setting up Composio connection:', error);
-      setAuthError(error instanceof Error ? error.message : 'Failed to setup connection');
-      setIsSettingUpConnection(false);
-    }
-  };
-
-  const handleCheckConnection = async () => {
-    if (!connectionData?.userEmail) return;
-
-    setIsCheckingConnection(true);
-    setAuthError(null);
-
-    try {
-      console.log('🔍 Checking connection status for:', connectionData.userEmail);
-      
-      const testResult = await composioService.testUserConnection(connectionData.userEmail);
-      
-      if (testResult.success && testResult.testResult) {
-        console.log('✅ Connection verified for:', connectionData.userEmail);
-        
-        // Update connection data with verified status
-        setConnectionData(prev => ({
-          ...prev,
-          status: 'active',
-          verified: true
-        }));
-        
-        // Update the email in our data
-        updateData('email', connectionData.userEmail);
-        
-        setAuthError(null);
-      } else {
-        console.warn('❌ Connection verification failed:', testResult.error);
-        setAuthError(testResult.error || 'Connection verification failed');
-      }
-    } catch (error) {
-      console.error('❌ Error checking connection:', error);
-      setAuthError(error instanceof Error ? error.message : 'Failed to check connection');
-    } finally {
-      setIsCheckingConnection(false);
-    }
   };
 
   const nextStep = () => {
@@ -164,7 +292,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return connectionData?.status === 'active' && data.email; // Must have active Composio connection
+        return googleAuthData.isAuthenticated && composioStatus.isConnected;
       case 2:
         return data.name.trim().length > 0;
       case 3:
@@ -194,100 +322,155 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
-              Connect Your Google Calendar
+              Connect Your Accounts
             </h2>
             <p className="text-gray-600 text-center max-w-md mx-auto">
-              To provide personalized AI calendar management, we'll connect to your Google Calendar through Composio.
+              First, we'll connect your Google Calendar, then set up AI-powered calendar management through Composio.
             </p>
             
-            {connectionData?.status === 'active' ? (
-              <div className="max-w-md mx-auto">
-                <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+            <div className="max-w-md mx-auto space-y-6">
+              {/* Google Authentication */}
+              <div className={`p-4 border-2 rounded-xl transition-all ${
+                googleAuthData.isAuthenticated 
+                  ? 'border-green-200 bg-green-50' 
+                  : 'border-gray-200 bg-white'
+              }`}>
+                <div className="flex items-center space-x-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    googleAuthData.isAuthenticated 
+                      ? 'bg-green-500' 
+                      : 'bg-blue-500'
+                  }`}>
+                    {googleAuthData.isAuthenticated ? (
                       <Check className="h-6 w-6 text-white" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-green-900">Successfully Connected!</p>
-                      <p className="text-sm text-green-700">Composio Entity: {connectionData.userEmail}</p>
-                      <p className="text-xs text-green-600 mt-1">Your Google Calendar is now connected via Composio</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : connectionData?.status === 'pending' ? (
-              <div className="max-w-md mx-auto space-y-4">
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
-                      <RefreshCw className="h-6 w-6 text-white animate-spin" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-blue-900">Connection Pending</p>
-                      <p className="text-sm text-blue-700">Please complete Google Calendar authentication</p>
-                    </div>
-                  </div>
-                </div>
-                
-                <button
-                  onClick={handleCheckConnection}
-                  disabled={isCheckingConnection}
-                  className={`w-full flex items-center justify-center space-x-2 px-4 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors ${
-                    isCheckingConnection ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  <RefreshCw className={`h-4 w-4 ${isCheckingConnection ? 'animate-spin' : ''}`} />
-                  <span>{isCheckingConnection ? 'Checking...' : 'Check Connection Status'}</span>
-                </button>
-              </div>
-            ) : (
-              <div className="max-w-md mx-auto space-y-4">
-                {authError && (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-white text-sm">!</span>
-                      </div>
-                      <div>
-                        <p className="font-medium text-red-900">Connection Error</p>
-                        <p className="text-sm text-red-700">{authError}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                <button
-                  onClick={handleSetupComposioConnection}
-                  disabled={isSettingUpConnection}
-                  className={`w-full flex items-center justify-center space-x-3 px-6 py-4 border-2 border-gray-200 rounded-xl hover:border-green-500 hover:bg-green-50 transition-all ${
-                    isSettingUpConnection ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                >
-                  <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                    {isSettingUpConnection ? (
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                     ) : (
-                      <Shield className="h-4 w-4 text-white" />
+                      <Calendar className="h-6 w-6 text-white" />
                     )}
                   </div>
-                  <div className="text-left">
+                  <div className="flex-1">
                     <p className="font-medium text-gray-900">
-                      {isSettingUpConnection ? 'Setting up...' : 'Connect via Composio'}
+                      {googleAuthData.isAuthenticated ? 'Google Calendar Connected' : 'Connect Google Calendar'}
                     </p>
                     <p className="text-sm text-gray-600">
-                      {isSettingUpConnection ? 'Preparing your connection...' : 'Secure Google Calendar integration'}
+                      {googleAuthData.isAuthenticated 
+                        ? `Connected as ${googleAuthData.userEmail}`
+                        : 'Required for calendar access'
+                      }
                     </p>
                   </div>
-                  <ExternalLink className="h-4 w-4 text-gray-400" />
-                </button>
-                
-                <div className="text-xs text-gray-500 text-center space-y-1">
-                  <p>🔒 Powered by Composio for secure Google Calendar access</p>
-                  <p>🤖 Enables AI-powered calendar management with OpenAI</p>
-                  <p>👤 Each user gets their own isolated Composio entity</p>
+                  {!googleAuthData.isAuthenticated && (
+                    <button
+                      onClick={handleGoogleSignIn}
+                      disabled={isAuthenticating}
+                      className={`px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ${
+                        isAuthenticating ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {isAuthenticating ? 'Connecting...' : 'Connect'}
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
+
+              {/* Composio Authentication */}
+              <div className={`p-4 border-2 rounded-xl transition-all ${
+                composioStatus.isConnected 
+                  ? 'border-green-200 bg-green-50' 
+                  : googleAuthData.isAuthenticated
+                    ? 'border-blue-200 bg-blue-50'
+                    : 'border-gray-200 bg-gray-50 opacity-50'
+              }`}>
+                <div className="flex items-center space-x-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    composioStatus.isConnected 
+                      ? 'bg-green-500' 
+                      : composioStatus.isConnecting
+                        ? 'bg-blue-500'
+                        : 'bg-gray-400'
+                  }`}>
+                    {composioStatus.isConnected ? (
+                      <Check className="h-6 w-6 text-white" />
+                    ) : composioStatus.isConnecting ? (
+                      <RefreshCw className="h-6 w-6 text-white animate-spin" />
+                    ) : (
+                      <Brain className="h-6 w-6 text-white" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">
+                      {composioStatus.isConnected 
+                        ? 'AI Calendar Management Ready' 
+                        : 'Connect AI Calendar Management'
+                      }
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {composioStatus.isConnected 
+                        ? 'Composio + OpenAI integration active'
+                        : composioStatus.isConnecting
+                          ? 'Setting up AI integration...'
+                          : 'Enables AI-powered calendar operations'
+                      }
+                    </p>
+                  </div>
+                  {googleAuthData.isAuthenticated && !composioStatus.isConnected && (
+                    <button
+                      onClick={handleComposioConnection}
+                      disabled={composioStatus.isConnecting}
+                      className={`px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors ${
+                        composioStatus.isConnecting ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {composioStatus.isConnecting ? 'Connecting...' : 'Connect'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Error Display */}
+              {(authError || composioStatus.error) && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+                  <div className="flex items-start space-x-3">
+                    <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-red-900">Connection Error</p>
+                      <p className="text-sm text-red-700">
+                        {authError || composioStatus.error}
+                      </p>
+                      {composioStatus.error && (
+                        <button
+                          onClick={() => setComposioStatus(prev => ({ ...prev, error: undefined }))}
+                          className="text-sm text-red-600 underline hover:no-underline mt-1"
+                        >
+                          Try again
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Success State */}
+              {googleAuthData.isAuthenticated && composioStatus.isConnected && (
+                <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <Check className="h-5 w-5 text-green-600" />
+                    <div>
+                      <p className="font-medium text-green-900">All Set!</p>
+                      <p className="text-sm text-green-700">
+                        Your accounts are connected and AI calendar management is ready.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Instructions */}
+              <div className="text-xs text-gray-500 text-center space-y-1">
+                <p>🔒 Secure OAuth 2.0 authentication with Google</p>
+                <p>🤖 AI-powered calendar management via Composio + OpenAI</p>
+                <p>👤 Personal AI assistant with isolated data</p>
+              </div>
+            </div>
           </div>
         );
 
@@ -308,7 +491,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               />
               {data.email && (
                 <p className="mt-2 text-sm text-gray-600 text-center">
-                  Connected via Composio: {data.email}
+                  Connected as: {data.email}
                 </p>
               )}
             </div>
@@ -562,7 +745,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <div>
                       <p className="font-medium text-green-900">Ready to get started!</p>
                       <p className="text-sm text-green-700">Your AI assistant will be personalized for {data.email}</p>
-                      <p className="text-xs text-green-600 mt-1">Powered by Composio + OpenAI integration</p>
+                      <p className="text-xs text-green-600 mt-1">Google Calendar + Composio + OpenAI integration ready</p>
                     </div>
                   </div>
                 </div>

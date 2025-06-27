@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import composioService from '../../services/composioService';
@@ -33,6 +33,7 @@ export default function AiSidebar() {
   const [testResults, setTestResults] = useState<any>(null);
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
+  const [isConnectingComposio, setIsConnectingComposio] = useState(false);
 
   // Get the authenticated user email from the app state
   const getAuthenticatedUserEmail = (): string | null => {
@@ -107,50 +108,48 @@ export default function AiSidebar() {
       return;
     }
 
+    setIsConnectingComposio(true);
+    setComposioConnectionError(null);
+
     try {
-      console.log(`🔗 Setting up Composio connection for ${userEmail}`);
-      setComposioConnectionError(null);
-
-      const result = await composioService.setupUserConnection(userEmail);
+      console.log(`🔗 Setting up Composio connection with popup for ${userEmail}`);
       
-      if (result.success) {
-        if (result.redirectUrl) {
-          // User needs to authenticate with Google Calendar
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              type: 'ai',
-              content: `🔗 Great! I've set up your personal Composio entity for ${userEmail}. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
-
-Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands!`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          // Open the redirect URL
-          window.open(result.redirectUrl, '_blank');
-        } else {
-          // Connection already exists
-          setIsComposioConnected(true);
-          setConnectionStatus(result.status || 'active');
-          
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              type: 'ai',
-              content: `🎉 Perfect! Your Composio connection for ${userEmail} is already active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        }
+      const success = await composioService.authenticateWithPopup(userEmail);
+      
+      if (success) {
+        setIsComposioConnected(true);
+        setConnectionStatus('active');
+        setComposioConnectionError(null);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `composio_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `🎉 Perfect! Your Composio connection for ${userEmail} is now active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+            timestamp: new Date().toISOString(),
+          },
+        });
       } else {
-        setComposioConnectionError(result.error || 'Failed to setup Composio connection');
+        throw new Error('Authentication was not completed');
       }
     } catch (error) {
       console.error('❌ Error setting up Composio connection:', error);
-      setComposioConnectionError('Failed to setup Composio connection');
+      setComposioConnectionError(error instanceof Error ? error.message : 'Failed to setup Composio connection');
+      setIsComposioConnected(false);
+      setConnectionStatus('error');
+      
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `composio_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: `❌ Failed to setup Composio connection: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } finally {
+      setIsConnectingComposio(false);
     }
   };
 
@@ -361,7 +360,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           <div className="flex items-center space-x-1">
             {isComposioConnected ? (
               <>
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <CheckCircle className="w-3 h-3 text-green-400" />
                 <span className={`text-xs ${
                   state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
                 }`}>
@@ -590,9 +589,9 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
             {displayUserEmail && !isComposioConnected && (
               <button
                 onClick={handleSetupConnection}
-                disabled={!serverAvailable}
+                disabled={!serverAvailable || isConnectingComposio}
                 className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  !serverAvailable
+                  !serverAvailable || isConnectingComposio
                     ? 'opacity-50 cursor-not-allowed'
                     : state.isDarkMode
                     ? 'bg-green-600 text-white hover:bg-green-700'
@@ -600,7 +599,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
                 }`}
               >
                 <Link className="h-3 w-3" />
-                <span>Setup Composio Connection</span>
+                <span>{isConnectingComposio ? 'Connecting...' : 'Setup Composio Connection'}</span>
               </button>
             )}
 
