@@ -32,11 +32,15 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     userName?: string;
     isSettingUpComposio: boolean;
     isCheckingAuth: boolean;
+    hasValidEmail: boolean;
+    composioSkipped: boolean;
   }>({
     googleAuthenticated: false,
     composioConnected: false,
     isSettingUpComposio: false,
     isCheckingAuth: true,
+    hasValidEmail: false,
+    composioSkipped: false,
   });
   
   const [data, setData] = useState<OnboardingData>({
@@ -51,6 +55,42 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   });
 
   const totalSteps = 8;
+
+  // Helper function to validate if an email is real (not a fallback)
+  const isValidRealEmail = (email: string): boolean => {
+    if (!email || typeof email !== 'string') return false;
+    
+    // Check for common fallback patterns
+    const fallbackPatterns = [
+      'authenticated.user@gmail.com',
+      'user@example.com',
+      'test@test.com',
+      'demo@demo.com',
+      /^user_\d+@temp\.local$/,
+      /^temp_user_\d+@/,
+      /^anonymous_\d+@/,
+    ];
+
+    // Check if email matches any fallback pattern
+    for (const pattern of fallbackPatterns) {
+      if (typeof pattern === 'string') {
+        if (email === pattern) return false;
+      } else {
+        if (pattern.test(email)) return false;
+      }
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) return false;
+
+    // Must contain a real domain (not just localhost or temp domains)
+    const domain = email.split('@')[1];
+    const invalidDomains = ['temp.local', 'localhost', 'example.com', 'test.com', 'demo.com'];
+    if (invalidDomains.includes(domain)) return false;
+
+    return true;
+  };
 
   // Check authentication status on mount and when URL changes
   useEffect(() => {
@@ -102,11 +142,21 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         // Try to get user email with better error handling
         let userEmail: string | null = null;
         let userName: string = '';
+        let hasValidEmail = false;
 
         try {
           // First try to get user email from Google API
           userEmail = await googleCalendarService.getAuthenticatedUserEmail();
           console.log('📧 Retrieved user email from Google API:', userEmail);
+          
+          // Validate if this is a real email
+          if (userEmail && isValidRealEmail(userEmail)) {
+            hasValidEmail = true;
+            console.log('✅ Valid real user email confirmed:', userEmail);
+          } else {
+            console.warn('⚠️ Email retrieved but not valid for Composio setup:', userEmail);
+            hasValidEmail = false;
+          }
         } catch (emailError) {
           console.warn('⚠️ Failed to get email from Google API, trying alternative method:', emailError);
           
@@ -118,13 +168,23 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               userEmail = userInfo.email;
               userName = userInfo.name || userInfo.given_name || '';
               console.log('📧 Retrieved user info from OAuth service:', { email: userEmail, name: userName });
+              
+              // Validate the email from OAuth service too
+              if (userEmail && isValidRealEmail(userEmail)) {
+                hasValidEmail = true;
+                console.log('✅ Valid real user email confirmed from OAuth service:', userEmail);
+              } else {
+                console.warn('⚠️ Email from OAuth service not valid for Composio setup:', userEmail);
+                hasValidEmail = false;
+              }
             }
           } catch (altError) {
             console.error('❌ Alternative email retrieval also failed:', altError);
           }
         }
 
-        if (userEmail) {
+        // If we have a valid email, proceed normally
+        if (hasValidEmail && userEmail) {
           // Extract name from email if we don't have it
           if (!userName) {
             userName = userEmail.split('@')[0]
@@ -139,19 +199,23 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             userEmail,
             userName,
             isCheckingAuth: false,
+            hasValidEmail: true,
+            composioSkipped: false,
           }));
 
           // Update form data
           updateData('email', userEmail);
           updateData('name', userName);
 
-          // Setup Composio connection
+          // Setup Composio connection with real email
           await setupComposioConnection(userEmail);
         } else {
-          // If we can't get email but we're authenticated, use a fallback
-          console.warn('⚠️ Could not retrieve user email, but authentication is valid');
-          const fallbackEmail = 'authenticated.user@gmail.com';
-          const fallbackName = 'User';
+          // If we can't get a real email, skip Composio setup but allow onboarding to continue
+          console.warn('⚠️ Cannot get valid email for Composio setup, skipping Composio integration');
+          
+          // Use fallback for display purposes only
+          const fallbackEmail = userEmail || 'No email available';
+          const fallbackName = userName || 'User';
 
           setAuthStatus(prev => ({
             ...prev,
@@ -159,13 +223,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             userEmail: fallbackEmail,
             userName: fallbackName,
             isCheckingAuth: false,
+            hasValidEmail: false,
+            composioConnected: false,
+            composioSkipped: true, // Mark that we skipped Composio
           }));
 
           updateData('email', fallbackEmail);
           updateData('name', fallbackName);
 
-          // Still try to setup Composio with fallback email
-          await setupComposioConnection(fallbackEmail);
+          // Don't setup Composio with invalid email
+          console.log('🚫 Skipping Composio setup - no valid email available');
         }
       } else {
         console.log('❌ Google not authenticated');
@@ -173,6 +240,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           ...prev,
           googleAuthenticated: false,
           isCheckingAuth: false,
+          hasValidEmail: false,
+          composioSkipped: false,
         }));
       }
     } catch (error) {
@@ -181,6 +250,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       setAuthStatus(prev => ({
         ...prev,
         isCheckingAuth: false,
+        hasValidEmail: false,
+        composioSkipped: false,
       }));
     } finally {
       setIsAuthenticating(false);
@@ -188,7 +259,19 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   };
 
   const setupComposioConnection = async (userEmail: string) => {
-    console.log('🔗 Setting up Composio connection for:', userEmail);
+    // Double-check email validity before proceeding
+    if (!isValidRealEmail(userEmail)) {
+      console.warn('🚫 Refusing to setup Composio with invalid email:', userEmail);
+      setAuthStatus(prev => ({
+        ...prev,
+        composioConnected: false,
+        composioSkipped: true,
+        isSettingUpComposio: false,
+      }));
+      return;
+    }
+
+    console.log('🔗 Setting up Composio connection for validated email:', userEmail);
     setAuthStatus(prev => ({ ...prev, isSettingUpComposio: true }));
     setAuthError(null);
 
@@ -284,6 +367,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   };
 
   const verifyComposioConnection = async (userEmail: string) => {
+    // Only verify if we have a valid email
+    if (!isValidRealEmail(userEmail)) {
+      console.warn('🚫 Skipping Composio verification - invalid email:', userEmail);
+      return;
+    }
+
     try {
       console.log('🔍 Verifying Composio connection for:', userEmail);
       const testResult = await composioService.testUserConnection(userEmail);
@@ -365,7 +454,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return authStatus.googleAuthenticated && authStatus.composioConnected && !authStatus.isCheckingAuth;
+        // Allow proceeding if Google is authenticated, regardless of Composio status
+        // This allows users to continue even if Composio setup fails or is skipped
+        return authStatus.googleAuthenticated && !authStatus.isCheckingAuth;
       case 2:
         return data.name.trim().length > 0;
       case 3:
@@ -469,64 +560,99 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && (
                 <div className="space-y-4">
                   {/* Google Authentication Success */}
-                  <div className="p-4 border-2 border-green-200 bg-green-50 rounded-xl">
+                  <div className={`p-4 border-2 rounded-xl ${
+                    authStatus.hasValidEmail 
+                      ? 'border-green-200 bg-green-50' 
+                      : 'border-yellow-200 bg-yellow-50'
+                  }`}>
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
-                        <Check className="h-6 w-6 text-white" />
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        authStatus.hasValidEmail ? 'bg-green-500' : 'bg-yellow-500'
+                      }`}>
+                        {authStatus.hasValidEmail ? (
+                          <Check className="h-6 w-6 text-white" />
+                        ) : (
+                          <AlertCircle className="h-6 w-6 text-white" />
+                        )}
                       </div>
                       <div className="flex-1">
-                        <p className="font-medium text-green-900">Google Calendar Connected</p>
-                        <p className="text-sm text-green-700">
-                          Connected as {authStatus.userEmail}
+                        <p className={`font-medium ${
+                          authStatus.hasValidEmail ? 'text-green-900' : 'text-yellow-900'
+                        }`}>
+                          Google Calendar Connected
+                        </p>
+                        <p className={`text-sm ${
+                          authStatus.hasValidEmail ? 'text-green-700' : 'text-yellow-700'
+                        }`}>
+                          {authStatus.hasValidEmail 
+                            ? `Connected as ${authStatus.userEmail}`
+                            : 'Connected but email verification needed'
+                          }
                         </p>
                       </div>
                     </div>
                   </div>
 
                   {/* Composio Setup Status */}
-                  <div className={`p-4 border-2 rounded-xl ${
-                    authStatus.composioConnected 
-                      ? 'border-green-200 bg-green-50' 
-                      : authStatus.isSettingUpComposio
-                        ? 'border-blue-200 bg-blue-50'
-                        : 'border-yellow-200 bg-yellow-50'
-                  }`}>
-                    <div className="flex items-center space-x-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        authStatus.composioConnected 
-                          ? 'bg-green-500' 
-                          : authStatus.isSettingUpComposio
-                            ? 'bg-blue-500'
-                            : 'bg-yellow-500'
-                      }`}>
-                        {authStatus.composioConnected ? (
-                          <Check className="h-6 w-6 text-white" />
-                        ) : authStatus.isSettingUpComposio ? (
-                          <Loader2 className="h-6 w-6 text-white animate-spin" />
-                        ) : (
-                          <Brain className="h-6 w-6 text-white" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">
-                          {authStatus.composioConnected 
-                            ? 'AI Calendar Management Ready' 
+                  {authStatus.hasValidEmail ? (
+                    <div className={`p-4 border-2 rounded-xl ${
+                      authStatus.composioConnected 
+                        ? 'border-green-200 bg-green-50' 
+                        : authStatus.isSettingUpComposio
+                          ? 'border-blue-200 bg-blue-50'
+                          : 'border-yellow-200 bg-yellow-50'
+                    }`}>
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          authStatus.composioConnected 
+                            ? 'bg-green-500' 
                             : authStatus.isSettingUpComposio
-                              ? 'Setting up AI Integration...'
-                              : 'AI Integration Pending'
-                          }
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          {authStatus.composioConnected 
-                            ? 'Composio + OpenAI integration active'
-                            : authStatus.isSettingUpComposio
-                              ? 'Configuring your personal AI assistant...'
-                              : 'Complete authentication in popup window'
-                          }
-                        </p>
+                              ? 'bg-blue-500'
+                              : 'bg-yellow-500'
+                        }`}>
+                          {authStatus.composioConnected ? (
+                            <Check className="h-6 w-6 text-white" />
+                          ) : authStatus.isSettingUpComposio ? (
+                            <Loader2 className="h-6 w-6 text-white animate-spin" />
+                          ) : (
+                            <Brain className="h-6 w-6 text-white" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">
+                            {authStatus.composioConnected 
+                              ? 'AI Calendar Management Ready' 
+                              : authStatus.isSettingUpComposio
+                                ? 'Setting up AI Integration...'
+                                : 'AI Integration Pending'
+                            }
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {authStatus.composioConnected 
+                              ? 'Composio + OpenAI integration active'
+                              : authStatus.isSettingUpComposio
+                                ? 'Configuring your personal AI assistant...'
+                                : 'Complete authentication in popup window'
+                            }
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ) : authStatus.composioSkipped ? (
+                    <div className="p-4 border-2 border-orange-200 bg-orange-50 rounded-xl">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
+                          <AlertCircle className="h-6 w-6 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium text-orange-900">AI Integration Skipped</p>
+                          <p className="text-sm text-orange-700">
+                            Advanced AI features require email verification. Basic calendar features are still available.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -550,14 +676,17 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               )}
 
               {/* Success State */}
-              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && authStatus.composioConnected && (
+              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && (authStatus.composioConnected || authStatus.composioSkipped) && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                   <div className="flex items-center space-x-3">
                     <Check className="h-5 w-5 text-green-600" />
                     <div>
-                      <p className="font-medium text-green-900">All Set!</p>
+                      <p className="font-medium text-green-900">Ready to Continue!</p>
                       <p className="text-sm text-green-700">
-                        Your calendar is connected and AI management is ready.
+                        {authStatus.composioConnected 
+                          ? 'Your calendar is connected and AI management is ready.'
+                          : 'Your calendar is connected. You can proceed with basic features.'
+                        }
                       </p>
                     </div>
                   </div>
@@ -567,7 +696,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               {/* Instructions */}
               <div className="text-xs text-gray-500 text-center space-y-1">
                 <p>🔒 Secure OAuth 2.0 authentication</p>
-                <p>🤖 AI-powered calendar management</p>
+                <p>🤖 AI-powered calendar management (when email verified)</p>
                 <p>👤 Personal AI assistant with isolated data</p>
               </div>
             </div>
@@ -590,9 +719,15 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 autoFocus
               />
               {data.email && (
-                <p className="mt-2 text-sm text-gray-600 text-center">
-                  Connected as: {data.email}
-                </p>
+                <div className="mt-2 text-sm text-gray-600 text-center">
+                  <p>Connected as: {data.email}</p>
+                  {authStatus.hasValidEmail && (
+                    <p className="text-green-600 text-xs mt-1">✓ Email verified for AI features</p>
+                  )}
+                  {!authStatus.hasValidEmail && authStatus.composioSkipped && (
+                    <p className="text-orange-600 text-xs mt-1">⚠️ AI features limited without email verification</p>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -845,7 +980,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <div>
                       <p className="font-medium text-green-900">Ready to get started!</p>
                       <p className="text-sm text-green-700">Your AI assistant will be personalized for {data.email}</p>
-                      <p className="text-xs text-green-600 mt-1">Google Calendar + Composio + OpenAI integration ready</p>
+                      <p className="text-xs text-green-600 mt-1">
+                        {authStatus.hasValidEmail 
+                          ? 'Google Calendar + Composio + OpenAI integration ready'
+                          : 'Google Calendar integration ready (AI features limited)'
+                        }
+                      </p>
                     </div>
                   </div>
                 </div>

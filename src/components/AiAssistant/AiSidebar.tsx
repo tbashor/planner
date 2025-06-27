@@ -34,14 +34,50 @@ export default function AiSidebar() {
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
 
+  // Helper function to validate if an email is real (not a fallback)
+  const isValidRealEmail = (email: string): boolean => {
+    if (!email || typeof email !== 'string') return false;
+    
+    // Check for common fallback patterns
+    const fallbackPatterns = [
+      'authenticated.user@gmail.com',
+      'user@example.com',
+      'test@test.com',
+      'demo@demo.com',
+      /^user_\d+@temp\.local$/,
+      /^temp_user_\d+@/,
+      /^anonymous_\d+@/,
+    ];
+
+    // Check if email matches any fallback pattern
+    for (const pattern of fallbackPatterns) {
+      if (typeof pattern === 'string') {
+        if (email === pattern) return false;
+      } else {
+        if (pattern.test(email)) return false;
+      }
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) return false;
+
+    // Must contain a real domain (not just localhost or temp domains)
+    const domain = email.split('@')[1];
+    const invalidDomains = ['temp.local', 'localhost', 'example.com', 'test.com', 'demo.com'];
+    if (invalidDomains.includes(domain)) return false;
+
+    return true;
+  };
+
   // Get the authenticated user email from the app state
   const getAuthenticatedUserEmail = (): string | null => {
-    if (state.user?.email) {
-      console.log('🔍 Found authenticated user email:', state.user.email);
+    if (state.user?.email && isValidRealEmail(state.user.email)) {
+      console.log('🔍 Found valid authenticated user email:', state.user.email);
       return state.user.email;
     }
 
-    console.warn('⚠️ No authenticated user email found');
+    console.warn('⚠️ No valid authenticated user email found. Email:', state.user?.email);
     return null;
   };
 
@@ -70,12 +106,12 @@ export default function AiSidebar() {
       const userEmail = getAuthenticatedUserEmail();
       if (!userEmail) {
         setIsComposioConnected(false);
-        setComposioConnectionError('Please complete onboarding to get your personal AI assistant');
-        setConnectionStatus('no_user');
+        setComposioConnectionError('Advanced AI features require email verification. Basic calendar features are available.');
+        setConnectionStatus('no_valid_email');
         return;
       }
 
-      console.log(`🔍 Checking Composio connection for user: ${userEmail}`);
+      console.log(`🔍 Checking Composio connection for validated user: ${userEmail}`);
 
       // Test user's Composio connection
       const testResult = await composioService.testUserConnection(userEmail);
@@ -113,7 +149,7 @@ export default function AiSidebar() {
         payload: {
           id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: 'Please complete onboarding first to get your personal AI assistant.',
+          content: 'Advanced AI features require email verification. Please ensure your Google account email is properly authenticated. Basic calendar features are still available.',
           timestamp: new Date().toISOString(),
         },
       });
@@ -136,7 +172,7 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      console.log(`💬 Sending message to Composio AI for user: ${userEmail}`);
+      console.log(`💬 Sending message to Composio AI for validated user: ${userEmail}`);
       
       // Send message to Composio + OpenAI service
       const response = await composioService.sendMessage(userMessage, userEmail, {
@@ -231,7 +267,7 @@ export default function AiSidebar() {
   const handleTestConnection = async () => {
     const userEmail = getAuthenticatedUserEmail();
     if (!userEmail) {
-      setComposioConnectionError('Please complete onboarding first');
+      setComposioConnectionError('Email verification required for AI features');
       return;
     }
 
@@ -239,7 +275,7 @@ export default function AiSidebar() {
     setTestResults(null);
 
     try {
-      console.log(`🧪 Testing Composio connection for ${userEmail}`);
+      console.log(`🧪 Testing Composio connection for validated user: ${userEmail}`);
       
       const result = await composioService.testUserConnection(userEmail);
       setTestResults(result);
@@ -282,6 +318,7 @@ export default function AiSidebar() {
   };
 
   const displayUserEmail = getAuthenticatedUserEmail();
+  const hasValidEmail = !!displayUserEmail;
 
   return (
     <div className={`w-80 h-full border-r flex flex-col ${
@@ -305,7 +342,7 @@ export default function AiSidebar() {
             </h2>
           </div>
           <div className="flex items-center space-x-1">
-            {isComposioConnected ? (
+            {isComposioConnected && hasValidEmail ? (
               <>
                 <CheckCircle className="w-3 h-3 text-green-400" />
                 <span className={`text-xs ${
@@ -320,7 +357,7 @@ export default function AiSidebar() {
                 <span className={`text-xs ${
                   state.isDarkMode ? 'text-red-400' : 'text-red-600'
                 }`}>
-                  Disconnected
+                  {hasValidEmail ? 'Disconnected' : 'Limited'}
                 </span>
               </>
             )}
@@ -328,18 +365,25 @@ export default function AiSidebar() {
         </div>
         
         {/* User Info */}
-        {displayUserEmail && (
+        {state.user?.email && (
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <div className="font-medium text-green-600">User: {displayUserEmail}</div>
+            <div className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
+              User: {state.user.email}
+            </div>
             <div>Status: {connectionStatus}</div>
             <div className="flex items-center space-x-2 mt-1">
               <Calendar className="h-3 w-3" />
               <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
               {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
             </div>
-            {isComposioConnected && (
+            {hasValidEmail ? (
+              <div className="text-green-500 mt-1">✓ Email verified - Full AI features available</div>
+            ) : (
+              <div className="text-orange-500 mt-1">⚠️ Email verification needed for AI features</div>
+            )}
+            {isComposioConnected && hasValidEmail && (
               <div className="text-green-500 mt-1">✓ Composio + OpenAI integration active</div>
             )}
           </div>
@@ -348,9 +392,13 @@ export default function AiSidebar() {
         {/* Connection Error */}
         {composioConnectionError && (
           <div className={`mt-3 p-3 rounded-md text-sm max-h-32 overflow-y-auto ${
-            state.isDarkMode 
-              ? 'bg-red-900/30 text-red-300 border border-red-800' 
-              : 'bg-red-50 text-red-700 border border-red-200'
+            hasValidEmail
+              ? state.isDarkMode 
+                ? 'bg-red-900/30 text-red-300 border border-red-800' 
+                : 'bg-red-50 text-red-700 border border-red-200'
+              : state.isDarkMode
+                ? 'bg-orange-900/30 text-orange-300 border border-orange-800'
+                : 'bg-orange-50 text-orange-700 border border-orange-200'
           }`}>
             <div className="flex items-start space-x-2">
               <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -359,7 +407,9 @@ export default function AiSidebar() {
                 <button 
                   onClick={checkServerAndConnections}
                   className={`mt-2 text-xs underline hover:no-underline ${
-                    state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                    hasValidEmail
+                      ? state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                      : state.isDarkMode ? 'text-orange-400' : 'text-orange-600'
                   }`}
                 >
                   Retry connection
@@ -387,11 +437,19 @@ export default function AiSidebar() {
             }`}>
               <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Start a conversation with your AI calendar assistant</p>
-              <p className="text-xs mt-1">Powered by Composio + OpenAI for direct Google Calendar management</p>
-              {displayUserEmail && (
+              <p className="text-xs mt-1">
+                {hasValidEmail 
+                  ? 'Powered by Composio + OpenAI for direct Google Calendar management'
+                  : 'Email verification required for advanced AI features'
+                }
+              </p>
+              {state.user?.email && (
                 <div className="text-xs mt-2 opacity-75">
-                  <p>Connected as: {displayUserEmail}</p>
+                  <p>Connected as: {state.user.email}</p>
                   <p>Status: {connectionStatus}</p>
+                  {!hasValidEmail && (
+                    <p className="text-orange-500 mt-1">⚠️ Limited features - email verification needed</p>
+                  )}
                 </div>
               )}
             </div>
@@ -450,38 +508,40 @@ export default function AiSidebar() {
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={
-                !displayUserEmail 
+                !state.user?.email 
                   ? "Complete onboarding to get your AI assistant..."
                   : !serverAvailable
                     ? "Server is offline..."
-                    : "Ask me to manage your Google Calendar..."
+                    : !hasValidEmail
+                      ? "Email verification needed for AI features..."
+                      : "Ask me to manage your Google Calendar..."
               }
-              disabled={isProcessingMessage || !displayUserEmail || !serverAvailable}
+              disabled={isProcessingMessage || !state.user?.email || !serverAvailable}
               className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 state.isDarkMode
                   ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                   : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-              } ${(isProcessingMessage || !displayUserEmail || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isProcessingMessage || !state.user?.email || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
             />
             {state.user?.preferences.voiceInput && (
               <button
                 type="button"
                 onClick={handleVoiceInput}
-                disabled={isProcessingMessage || !displayUserEmail || !serverAvailable}
+                disabled={isProcessingMessage || !state.user?.email || !serverAvailable}
                 className={`p-2 rounded-lg transition-colors duration-200 ${
                   isListening
                     ? 'bg-red-500 text-white'
                     : state.isDarkMode
                     ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                } ${(isProcessingMessage || !displayUserEmail || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${(isProcessingMessage || !state.user?.email || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Mic className="h-4 w-4" />
               </button>
             )}
             <button
               type="submit"
-              disabled={!chatInput.trim() || isProcessingMessage || !displayUserEmail || !serverAvailable}
+              disabled={!chatInput.trim() || isProcessingMessage || !state.user?.email || !serverAvailable}
               className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
             >
               <Send className="h-4 w-4" />
@@ -492,10 +552,12 @@ export default function AiSidebar() {
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            {!displayUserEmail ? (
+            {!state.user?.email ? (
               <p>🔐 Complete onboarding to get your AI assistant</p>
             ) : !serverAvailable ? (
               <p>🔌 Server is offline - please start the server</p>
+            ) : !hasValidEmail ? (
+              <p>📧 Email verification needed for advanced AI features</p>
             ) : (
               <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's on my calendar?", "Create a workout session"</p>
             )}
@@ -533,7 +595,7 @@ export default function AiSidebar() {
         {showComposioSettings && (
           <div className="space-y-3 mb-3">
             {/* Test Connection Button */}
-            {displayUserEmail && (
+            {state.user?.email && (
               <button
                 onClick={handleTestConnection}
                 disabled={isTestingConnection || !serverAvailable}
@@ -568,20 +630,25 @@ export default function AiSidebar() {
 
         {/* Connection Status */}
         <div className={`text-xs p-2 rounded-lg ${
-          isComposioConnected
+          isComposioConnected && hasValidEmail
             ? state.isDarkMode ? 'bg-green-900 bg-opacity-20 text-green-400' : 'bg-green-50 text-green-600'
-            : state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
+            : hasValidEmail
+              ? state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
+              : state.isDarkMode ? 'bg-orange-900 bg-opacity-20 text-orange-400' : 'bg-orange-50 text-orange-600'
         }`}>
           <div className="flex items-center space-x-1 mb-1">
             <Link className="h-3 w-3" />
             <span className="font-medium">
-              {isComposioConnected ? 'All Systems Connected' : 'Connection Issue'}
+              {isComposioConnected && hasValidEmail ? 'All Systems Connected' : 
+               hasValidEmail ? 'Connection Issue' : 'Email Verification Needed'}
             </span>
           </div>
           <p>
-            {isComposioConnected 
+            {isComposioConnected && hasValidEmail
               ? `Your Google Calendar (${displayUserEmail}) is connected via Composio. I can create, update, and manage events using AI commands.`
-              : `Your connections were set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
+              : hasValidEmail
+                ? `Your connections were set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
+                : `Email verification is required for advanced AI calendar management. Basic Google Calendar features are available.`
             }
           </p>
         </div>
