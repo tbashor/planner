@@ -1,7 +1,6 @@
 import { Event } from '../types';
 import { format, parseISO } from 'date-fns';
 import { oauthService } from './oauthService';
-import { serverApiService } from './serverApiService';
 
 interface GoogleCalendarEvent {
   id: string;
@@ -39,7 +38,6 @@ class GoogleCalendarService {
     console.log('🔧 Google Calendar Service initialized');
     console.log('- Base URL:', this.baseUrl);
     console.log('- Using OAuth service for authentication');
-    console.log('- Server API integration enabled');
   }
 
   /**
@@ -47,6 +45,13 @@ class GoogleCalendarService {
    */
   isAuthenticated(): boolean {
     return oauthService.isAuthenticated();
+  }
+
+  /**
+   * Get authorization URL for Google Calendar
+   */
+  async getAuthUrl(): Promise<string> {
+    return await oauthService.buildAuthUrl(true);
   }
 
   /**
@@ -58,11 +63,13 @@ class GoogleCalendarService {
   }
 
   /**
-   * Get the authenticated user's email from tokens or user profile
+   * Get the authenticated user's email from Google's userinfo endpoint
    */
-  private async getAuthenticatedUserEmail(): Promise<string | null> {
+  async getAuthenticatedUserEmail(): Promise<string | null> {
     try {
-      // Try to get user info from Google's userinfo endpoint
+      console.log('🔍 Retrieving authenticated user email from Google...');
+      
+      // Get user info from Google's userinfo endpoint
       const response = await oauthService.makeAuthenticatedRequest('https://www.googleapis.com/oauth2/v2/userinfo');
       
       if (response.ok) {
@@ -76,59 +83,6 @@ class GoogleCalendarService {
     } catch (error) {
       console.error('❌ Error getting authenticated user email:', error);
       return null;
-    }
-  }
-
-  /**
-   * Connect user's Google Calendar to the server-side Letta/Composio integration
-   */
-  async connectToServerIntegration(userEmail: string): Promise<boolean> {
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('User is not authenticated with Google Calendar');
-      }
-
-      // Get the REAL authenticated user email from Google
-      const authenticatedEmail = await this.getAuthenticatedUserEmail();
-      
-      if (!authenticatedEmail) {
-        throw new Error('Could not retrieve authenticated user email from Google');
-      }
-
-      // Verify that the provided email matches the authenticated email
-      if (userEmail !== authenticatedEmail) {
-        console.warn(`⚠️ Email mismatch: provided ${userEmail}, authenticated ${authenticatedEmail}`);
-        console.log('🔄 Using authenticated email instead:', authenticatedEmail);
-        userEmail = authenticatedEmail; // Use the real authenticated email
-      }
-
-      const tokens = oauthService.getStoredTokens();
-      if (!tokens) {
-        throw new Error('No valid tokens available');
-      }
-
-      console.log('🔗 Connecting AUTHENTICATED user Google Calendar to server integration:', userEmail);
-
-      // Send user's tokens to server to connect with Composio using REAL email
-      const response = await serverApiService.connectUserGoogleCalendar(
-        userEmail, // Use the REAL authenticated email
-        tokens.access_token,
-        (tokens as any).refresh_token,
-        (tokens as any).expires_in
-      );
-
-      if (response.success) {
-        console.log('✅ AUTHENTICATED user Google Calendar connected to server integration:', {
-          userEmail: userEmail,
-          agentId: response.agentId
-        });
-        return true;
-      } else {
-        throw new Error(response.error || 'Failed to connect to server integration');
-      }
-    } catch (error) {
-      console.error('❌ Failed to connect to server integration:', error);
-      return false;
     }
   }
 

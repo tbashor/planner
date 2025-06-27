@@ -8,6 +8,7 @@ import { generatePersonalizedSuggestions } from './utils/aiUtils';
 
 interface OnboardingData {
   name: string;
+  email: string; // Real authenticated email from Google
   workSchedule: string;
   productiveHours: string[];
   focusAreas: string[];
@@ -81,11 +82,12 @@ function AppContent() {
     // Add welcome message only if no chat messages exist and onboarding is complete
     if (!isOAuthCallback && state.isOnboardingComplete && state.chatMessages.length === 0) {
       const userName = state.user?.name || 'there';
+      const userEmail = state.user?.email || 'your account';
       const hasPreservedEvents = preservedAiEvents !== null;
       
       const welcomeMessage = hasPreservedEvents 
-        ? `👋 Welcome back ${userName}! I've successfully restored your AI-suggested events and updated my recommendations based on your new preferences. Ready to optimize your schedule?`
-        : `👋 Welcome back ${userName}! I'm your AI assistant. Based on your preferences, I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`;
+        ? `👋 Welcome back ${userName}! I've successfully restored your AI-suggested events and updated my recommendations based on your new preferences. Your calendar for ${userEmail} is ready to go!`
+        : `👋 Welcome ${userName}! I'm your AI assistant connected to ${userEmail}. I'm here to help you optimize your schedule, boost productivity, and stay motivated. What would you like to work on today?`;
       
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
@@ -97,9 +99,11 @@ function AppContent() {
         },
       });
     }
-  }, [dispatch, isOAuthCallback, state.isOnboardingComplete, state.user?.name, state.events.length, state.chatMessages.length]);
+  }, [dispatch, isOAuthCallback, state.isOnboardingComplete, state.user?.name, state.user?.email, state.events.length, state.chatMessages.length]);
 
   const handleOnboardingComplete = (data: OnboardingData) => {
+    console.log('🎉 Onboarding completed with REAL email:', data.email);
+    
     // Convert onboarding data to user preferences
     const productivityHours = data.productiveHours.map(period => {
       switch (period) {
@@ -121,10 +125,11 @@ function AppContent() {
       }
     })();
 
+    // Create user with REAL authenticated email
     const user = {
       id: '1',
       name: data.name,
-      email: `${data.name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+      email: data.email, // Use the REAL authenticated email from Google
       avatar: 'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=400',
       preferences: {
         theme: 'light' as const,
@@ -140,6 +145,7 @@ function AppContent() {
       },
     };
 
+    console.log('✅ Created user with authenticated email:', user.email);
     dispatch({ type: 'COMPLETE_ONBOARDING', payload: user });
   };
 

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
-import GoogleCalendarAuth from '../GoogleCalendar/GoogleCalendarAuth';
 import composioService from '../../services/composioService';
+import { googleCalendarService } from '../../services/googleCalendarService';
 
 // Extend Window interface for webkit speech recognition
 declare global {
@@ -32,8 +32,9 @@ export default function AiSidebar() {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testResults, setTestResults] = useState<any>(null);
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
+  const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
 
-  // Get the ACTUAL authenticated user email from the app state
+  // Get the authenticated user email from the app state
   const getAuthenticatedUserEmail = (): string | null => {
     if (state.user?.email) {
       console.log('🔍 Found authenticated user email:', state.user.email);
@@ -44,16 +45,20 @@ export default function AiSidebar() {
     return null;
   };
 
-  // Check server availability and Composio connection
+  // Check server availability and connections
   useEffect(() => {
-    checkServerAndConnection();
+    checkServerAndConnections();
   }, [state.user?.email]);
 
-  const checkServerAndConnection = async () => {
+  const checkServerAndConnections = async () => {
     try {
       // Check server availability
       const available = await composioService.isServerAvailable();
       setServerAvailable(available);
+
+      // Check Google Calendar connection
+      const googleConnected = googleCalendarService.isAuthenticated();
+      setIsGoogleCalendarConnected(googleConnected);
 
       if (!available) {
         setIsComposioConnected(false);
@@ -116,7 +121,7 @@ export default function AiSidebar() {
             payload: {
               id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🔗 Great! I've set up your personal Composio entity. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
+              content: `🔗 Great! I've set up your personal Composio entity for ${userEmail}. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
 
 Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands!`,
               timestamp: new Date().toISOString(),
@@ -135,7 +140,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
             payload: {
               id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🎉 Perfect! Your Composio connection is already active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              content: `🎉 Perfect! Your Composio connection for ${userEmail} is already active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
               timestamp: new Date().toISOString(),
             },
           });
@@ -303,7 +308,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           payload: {
             id: `test_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `🧪 Connection test successful! Your Composio integration is working perfectly. I have access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools for managing your calendar.`,
+            content: `🧪 Connection test successful for ${userEmail}! Your Composio integration is working perfectly. I have access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools for managing your calendar.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -316,7 +321,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           payload: {
             id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `❌ Connection test failed: ${result.error}. Please setup your Composio connection first.`,
+            content: `❌ Connection test failed for ${userEmail}: ${result.error}. Please setup your Composio connection first.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -382,7 +387,12 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
             <div className="font-medium text-green-600">User: {displayUserEmail}</div>
-            <div>Status: {connectionStatus}</div>
+            <div>Composio Status: {connectionStatus}</div>
+            <div className="flex items-center space-x-2 mt-1">
+              <Calendar className="h-3 w-3" />
+              <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
+              {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
+            </div>
             {isComposioConnected && (
               <div className="text-green-500 mt-1">✓ Composio + OpenAI integration active</div>
             )}
@@ -401,7 +411,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
               <div className="flex-1">
                 <div className="whitespace-pre-wrap break-words">{composioConnectionError}</div>
                 <button 
-                  onClick={checkServerAndConnection}
+                  onClick={checkServerAndConnections}
                   className={`mt-2 text-xs underline hover:no-underline ${
                     state.isDarkMode ? 'text-red-400' : 'text-red-600'
                   }`}
@@ -642,15 +652,62 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           </div>
           <p>
             {isComposioConnected 
-              ? `Your Google Calendar is connected via Composio. I can create, update, and manage events using AI commands.`
-              : `Connect your Google Calendar through Composio to enable AI-powered calendar management.`
+              ? `Your Google Calendar (${displayUserEmail}) is connected via Composio. I can create, update, and manage events using AI commands.`
+              : `Connect your Google Calendar through Composio to enable AI-powered calendar management for ${displayUserEmail || 'your account'}.`
             }
           </p>
         </div>
       </div>
 
-      {/* Google Calendar Integration */}
-      <GoogleCalendarAuth />
+      {/* AI Suggestions */}
+      <div className={`border-t p-4 flex-shrink-0 ${
+        state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
+      }`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-2">
+            <Lightbulb className={`h-4 w-4 ${
+              state.isDarkMode ? 'text-yellow-400' : 'text-yellow-500'
+            }`} />
+            <h3 className={`text-sm font-medium ${
+              state.isDarkMode ? 'text-white' : 'text-gray-900'
+            }`}>
+              AI Suggestions
+            </h3>
+          </div>
+          <button
+            onClick={() => setIsGenerating(!isGenerating)}
+            disabled={isGenerating || !state.user?.preferences}
+            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+              (isGenerating)
+                ? 'opacity-50 cursor-not-allowed'
+                : state.isDarkMode
+                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                : 'bg-purple-500 text-white hover:bg-purple-600'
+            }`}
+          >
+            <Sparkles className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
+            <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+          </button>
+        </div>
+
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {state.aiSuggestions.length === 0 ? (
+            <div className={`text-center py-4 ${
+              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">Click "Generate" for personalized suggestions</p>
+            </div>
+          ) : (
+            state.aiSuggestions.slice(0, 3).map((suggestion, index) => (
+              <AiSuggestionCard 
+                key={`${suggestion.id}_${index}`}
+                suggestion={suggestion} 
+              />
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }

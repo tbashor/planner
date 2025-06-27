@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Brain, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
+import { googleCalendarService } from '../../services/googleCalendarService';
+import composioService from '../../services/composioService';
 
 interface OnboardingData {
   name: string;
+  email: string; // Real authenticated email
   workSchedule: string;
   productiveHours: string[];
   focusAreas: string[];
@@ -19,8 +22,12 @@ interface OnboardingWizardProps {
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const { state } = useApp();
   const [currentStep, setCurrentStep] = useState(1);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authenticatedEmail, setAuthenticatedEmail] = useState<string | null>(null);
   const [data, setData] = useState<OnboardingData>({
     name: '',
+    email: '', // Will be set from Google authentication
     workSchedule: '',
     productiveHours: [],
     focusAreas: [],
@@ -29,7 +36,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     goals: '',
   });
 
-  const totalSteps = 7;
+  const totalSteps = 8; // Added authentication step
 
   const updateData = (field: keyof OnboardingData, value: any) => {
     setData(prev => ({ ...prev, [field]: value }));
@@ -41,6 +48,75 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       ? currentArray.filter(item => item !== value)
       : [...currentArray, value];
     updateData(field, newArray);
+  };
+
+  const handleGoogleAuthentication = async () => {
+    setIsAuthenticating(true);
+    setAuthError(null);
+
+    try {
+      console.log('🔐 Starting Google Calendar authentication...');
+      
+      // Use the existing Google Calendar service to authenticate
+      const authUrl = await googleCalendarService.getAuthUrl();
+      
+      // Open authentication in a new window
+      const authWindow = window.open(authUrl, 'google-auth', 'width=500,height=600');
+      
+      // Poll for authentication completion
+      const pollForAuth = setInterval(async () => {
+        try {
+          if (authWindow?.closed) {
+            clearInterval(pollForAuth);
+            
+            // Check if authentication was successful
+            if (googleCalendarService.isAuthenticated()) {
+              // Get the authenticated user's email
+              const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+              
+              if (userEmail) {
+                console.log('✅ Authentication successful for:', userEmail);
+                setAuthenticatedEmail(userEmail);
+                updateData('email', userEmail);
+                
+                // Setup Composio connection for this user
+                try {
+                  const composioResult = await composioService.setupUserConnection(userEmail);
+                  console.log('🔗 Composio setup result:', composioResult);
+                } catch (composioError) {
+                  console.warn('⚠️ Composio setup failed, but continuing with onboarding:', composioError);
+                }
+                
+                setIsAuthenticating(false);
+              } else {
+                throw new Error('Could not retrieve authenticated user email');
+              }
+            } else {
+              throw new Error('Authentication was not completed');
+            }
+          }
+        } catch (error) {
+          clearInterval(pollForAuth);
+          console.error('❌ Authentication error:', error);
+          setAuthError(error instanceof Error ? error.message : 'Authentication failed');
+          setIsAuthenticating(false);
+        }
+      }, 1000);
+
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollForAuth);
+        if (isAuthenticating) {
+          setAuthError('Authentication timed out. Please try again.');
+          setIsAuthenticating(false);
+        }
+      }, 300000);
+
+    } catch (error) {
+      console.error('❌ Error starting authentication:', error);
+      setAuthError(error instanceof Error ? error.message : 'Failed to start authentication');
+      setIsAuthenticating(false);
+    }
   };
 
   const nextStep = () => {
@@ -60,18 +136,20 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return data.name.trim().length > 0;
+        return authenticatedEmail && data.email; // Must have authenticated email
       case 2:
-        return data.workSchedule.length > 0;
+        return data.name.trim().length > 0;
       case 3:
-        return data.productiveHours.length > 0;
+        return data.workSchedule.length > 0;
       case 4:
-        return data.focusAreas.length > 0;
+        return data.productiveHours.length > 0;
       case 5:
-        return true; // Optional step
+        return data.focusAreas.length > 0;
       case 6:
-        return data.aiPreferences.length > 0;
+        return true; // Optional step
       case 7:
+        return data.aiPreferences.length > 0;
+      case 8:
         return true; // Optional step
       default:
         return true;
@@ -88,6 +166,79 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
+              Connect Your Google Calendar
+            </h2>
+            <p className="text-gray-600 text-center max-w-md mx-auto">
+              To provide personalized AI calendar management, we need to connect to your Google Calendar account.
+            </p>
+            
+            {authenticatedEmail ? (
+              <div className="max-w-md mx-auto">
+                <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+                      <Check className="h-6 w-6 text-white" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-green-900">Successfully Connected!</p>
+                      <p className="text-sm text-green-700">{authenticatedEmail}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="max-w-md mx-auto space-y-4">
+                {authError && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <span className="text-white text-sm">!</span>
+                      </div>
+                      <div>
+                        <p className="font-medium text-red-900">Authentication Error</p>
+                        <p className="text-sm text-red-700">{authError}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                <button
+                  onClick={handleGoogleAuthentication}
+                  disabled={isAuthenticating}
+                  className={`w-full flex items-center justify-center space-x-3 px-6 py-4 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all ${
+                    isAuthenticating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                >
+                  <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                    {isAuthenticating ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <Shield className="h-4 w-4 text-white" />
+                    )}
+                  </div>
+                  <div className="text-left">
+                    <p className="font-medium text-gray-900">
+                      {isAuthenticating ? 'Connecting...' : 'Connect Google Calendar'}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {isAuthenticating ? 'Please complete authentication in the popup' : 'Secure OAuth 2.0 authentication'}
+                    </p>
+                  </div>
+                </button>
+                
+                <div className="text-xs text-gray-500 text-center">
+                  <p>🔒 Your data is secure. We use industry-standard OAuth 2.0 authentication.</p>
+                  <p>We only access your calendar data to provide AI-powered scheduling assistance.</p>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case 2:
+        return (
+          <div className="space-y-8">
+            <h2 className="text-3xl font-bold text-gray-900 text-center">
               What should I call you?
             </h2>
             <div className="max-w-md mx-auto">
@@ -99,11 +250,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 className="w-full px-6 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
                 autoFocus
               />
+              {authenticatedEmail && (
+                <p className="mt-2 text-sm text-gray-600 text-center">
+                  Connected as: {authenticatedEmail}
+                </p>
+              )}
             </div>
           </div>
         );
 
-      case 2:
+      case 3:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -148,7 +304,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           </div>
         );
 
-      case 3:
+      case 4:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -193,7 +349,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           </div>
         );
 
-      case 4:
+      case 5:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -239,7 +395,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           </div>
         );
 
-      case 5:
+      case 6:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -284,7 +440,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           </div>
         );
 
-      case 6:
+      case 7:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -328,7 +484,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           </div>
         );
 
-      case 7:
+      case 8:
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
@@ -343,6 +499,17 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 rows={4}
                 className="w-full px-6 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors resize-none"
               />
+              {authenticatedEmail && (
+                <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <Mail className="h-5 w-5 text-green-600" />
+                    <div>
+                      <p className="font-medium text-green-900">Ready to get started!</p>
+                      <p className="text-sm text-green-700">Your AI assistant will be personalized for {authenticatedEmail}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );
