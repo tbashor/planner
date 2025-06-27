@@ -62,11 +62,11 @@ export default function AiSidebar() {
     const userMessage = chatInput.trim();
     setIsProcessingMessage(true);
 
-    // Add user message
+    // Add user message with unique ID
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'user',
         content: userMessage,
         timestamp: new Date().toISOString(),
@@ -98,12 +98,12 @@ export default function AiSidebar() {
         });
       }
 
-      // Add assistant response
+      // Add assistant response with unique ID
       setTimeout(() => {
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
-            id: (Date.now() + 1).toString(),
+            id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
             content: lettaResponse.message,
             timestamp: new Date().toISOString(),
@@ -118,7 +118,7 @@ export default function AiSidebar() {
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
-            id: (Date.now() + 1).toString(),
+            id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
             content: "I'm having trouble processing that request right now. Please try again or check your connection to the AI assistant.",
             timestamp: new Date().toISOString(),
@@ -177,11 +177,11 @@ export default function AiSidebar() {
         dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
       });
 
-      // Add AI message about new suggestions
+      // Add AI message about new suggestions with unique ID
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `ai_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `✨ I've generated ${newSuggestions.length} new personalized suggestions based on your preferences! These are tailored to your focus areas: ${state.user!.preferences.focusAreas?.join(', ') || 'your goals'}. Check them out below!`,
           timestamp: new Date().toISOString(),
@@ -194,7 +194,7 @@ export default function AiSidebar() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `ai_error_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: "I had trouble generating new suggestions. Please try again later.",
           timestamp: new Date().toISOString(),
@@ -308,9 +308,9 @@ export default function AiSidebar() {
             </div>
           )}
           
-          {state.chatMessages.map((message) => (
+          {state.chatMessages.map((message, index) => (
             <div
-              key={message.id}
+              key={`${message.id}_${index}`} // Use both ID and index to ensure uniqueness
               className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
@@ -450,8 +450,11 @@ export default function AiSidebar() {
               )}
             </div>
           ) : (
-            state.aiSuggestions.slice(0, 3).map((suggestion) => (
-              <AiSuggestionCard key={suggestion.id} suggestion={suggestion} />
+            state.aiSuggestions.slice(0, 3).map((suggestion, index) => (
+              <AiSuggestionCard 
+                key={`${suggestion.id}_${index}`} // Use both ID and index to ensure uniqueness
+                suggestion={suggestion} 
+              />
             ))
           )}
         </div>

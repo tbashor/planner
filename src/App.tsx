@@ -45,7 +45,7 @@ function AppContent() {
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
-              id: Date.now().toString(),
+              id: `restore_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
               content: `🎉 Welcome back! I've restored your ${aiEvents.length} AI-suggested events and I'm now adapting my suggestions to your updated preferences. Your schedule continuity is maintained!`,
               timestamp: new Date().toISOString(),
@@ -90,7 +90,7 @@ function AppContent() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: 'welcome',
+          id: `welcome_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: welcomeMessage,
           timestamp: new Date().toISOString(),

@@ -47,7 +47,7 @@ export default function Header() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `reset_preserve_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `🔄 Preferences reset! I've preserved ${aiEvents.length} AI-suggested events from your previous setup. After you complete onboarding, I'll adapt my suggestions to your new preferences while keeping your existing AI events.`,
           timestamp: new Date().toISOString(),
@@ -57,7 +57,7 @@ export default function Header() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `reset_complete_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: '🔄 Complete reset performed! All data has been cleared. I\'ll provide fresh suggestions based on your new preferences after onboarding.',
           timestamp: new Date().toISOString(),
@@ -91,7 +91,7 @@ export default function Header() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `reconnect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: '🔄 Google Calendar has been disconnected. You can now connect a different Google account through the AI sidebar.',
           timestamp: new Date().toISOString(),
@@ -107,7 +107,7 @@ export default function Header() {
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `notifications_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ai',
         content: '🔔 Notification settings are coming soon! For now, you can enable/disable motivational feedback in your user preferences.',
         timestamp: new Date().toISOString(),
@@ -121,7 +121,7 @@ export default function Header() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `refresh_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: '⚠️ Please complete onboarding first to get personalized AI suggestions.',
           timestamp: new Date().toISOString(),
@@ -152,7 +152,7 @@ export default function Header() {
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `refresh_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ai',
         content: `✨ I've refreshed my suggestions based on your current preferences! Generated ${newSuggestions.length} new personalized recommendations that align with your focus areas: ${state.user.preferences.focusAreas?.join(', ') || 'your goals'}.`,
         timestamp: new Date().toISOString(),
