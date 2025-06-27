@@ -30,10 +30,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     userEmail?: string;
     userName?: string;
     isSettingUpComposio: boolean;
+    isCheckingAuth: boolean;
   }>({
     googleAuthenticated: false,
     composioConnected: false,
     isSettingUpComposio: false,
+    isCheckingAuth: true,
   });
   
   const [data, setData] = useState<OnboardingData>({
@@ -49,82 +51,107 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const totalSteps = 8;
 
-  // Check for OAuth callback on component mount
+  // Check authentication status on mount and when URL changes
   useEffect(() => {
-    checkForOAuthCallback();
+    checkAuthenticationStatus();
   }, []);
 
-  // Check Google authentication status on mount
+  // Also check when the component becomes visible (user returns from OAuth)
   useEffect(() => {
-    const isGoogleAuthenticated = googleCalendarService.isAuthenticated();
-    if (isGoogleAuthenticated) {
-      handleGoogleAuthSuccess();
-    }
-  }, []);
-
-  const checkForOAuthCallback = async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const state = urlParams.get('state');
-    
-    if (code && state) {
-      console.log('🔍 OAuth callback detected, processing...');
-      setIsAuthenticating(true);
-      
-      try {
-        // This will be handled by the OAuthCallback component
-        // But we can check if we're now authenticated
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('🔍 Page became visible, checking auth status...');
         setTimeout(() => {
-          const isAuthenticated = googleCalendarService.isAuthenticated();
-          if (isAuthenticated) {
-            handleGoogleAuthSuccess();
-          }
-          setIsAuthenticating(false);
-        }, 2000);
-      } catch (error) {
-        console.error('❌ Error processing OAuth callback:', error);
-        setAuthError('Failed to process authentication');
-        setIsAuthenticating(false);
+          checkAuthenticationStatus();
+        }, 1000); // Small delay to allow tokens to be processed
       }
-    }
-  };
+    };
 
-  const handleGoogleAuthSuccess = async () => {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  const checkAuthenticationStatus = async () => {
+    console.log('🔍 Checking authentication status...');
+    setAuthStatus(prev => ({ ...prev, isCheckingAuth: true }));
+    setAuthError(null);
+
     try {
-      console.log('✅ Google authentication successful, loading user info...');
+      // Check if we're returning from OAuth callback
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code');
+      const state = urlParams.get('state');
       
-      const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
-      if (userEmail) {
-        // Extract name from email (simple approach)
-        const userName = userEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      if (code && state) {
+        console.log('🔄 OAuth callback detected, processing...');
+        setIsAuthenticating(true);
         
+        // Clear URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // Wait a moment for the OAuth callback to be processed
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Check Google Calendar authentication
+      const isGoogleAuthenticated = googleCalendarService.isAuthenticated();
+      console.log('🔍 Google authenticated:', isGoogleAuthenticated);
+
+      if (isGoogleAuthenticated) {
+        // Get user email and info
+        const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+        console.log('📧 Retrieved user email:', userEmail);
+
+        if (userEmail) {
+          // Extract name from email
+          const userName = userEmail.split('@')[0]
+            .replace(/[._]/g, ' ')
+            .replace(/\b\w/g, l => l.toUpperCase());
+
+          // Update auth status
+          setAuthStatus(prev => ({
+            ...prev,
+            googleAuthenticated: true,
+            userEmail,
+            userName,
+            isCheckingAuth: false,
+          }));
+
+          // Update form data
+          updateData('email', userEmail);
+          updateData('name', userName);
+
+          // Setup Composio connection
+          await setupComposioConnection(userEmail);
+        } else {
+          throw new Error('Failed to retrieve user email');
+        }
+      } else {
+        console.log('❌ Google not authenticated');
         setAuthStatus(prev => ({
           ...prev,
-          googleAuthenticated: true,
-          userEmail,
-          userName,
+          googleAuthenticated: false,
+          isCheckingAuth: false,
         }));
-        
-        // Update form data
-        updateData('email', userEmail);
-        updateData('name', userName);
-        
-        // Automatically set up Composio connection
-        await setupComposioConnection(userEmail);
       }
     } catch (error) {
-      console.error('❌ Error loading Google user info:', error);
-      setAuthError('Failed to load user information');
+      console.error('❌ Error checking authentication status:', error);
+      setAuthError(error instanceof Error ? error.message : 'Authentication check failed');
+      setAuthStatus(prev => ({
+        ...prev,
+        isCheckingAuth: false,
+      }));
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
   const setupComposioConnection = async (userEmail: string) => {
+    console.log('🔗 Setting up Composio connection for:', userEmail);
     setAuthStatus(prev => ({ ...prev, isSettingUpComposio: true }));
     setAuthError(null);
 
     try {
-      console.log('🔗 Setting up Composio connection for authenticated user:', userEmail);
-      
       // Test if connection already exists
       const testResult = await composioService.testUserConnection(userEmail);
       
@@ -207,6 +234,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const verifyComposioConnection = async (userEmail: string) => {
     try {
+      console.log('🔍 Verifying Composio connection for:', userEmail);
       const testResult = await composioService.testUserConnection(userEmail);
       
       if (testResult.success && testResult.testResult) {
@@ -244,6 +272,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   };
 
+  const handleRetryAuth = () => {
+    setAuthError(null);
+    checkAuthenticationStatus();
+  };
+
   const updateData = (field: keyof OnboardingData, value: any) => {
     setData(prev => ({ ...prev, [field]: value }));
   };
@@ -273,7 +306,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return authStatus.googleAuthenticated && authStatus.composioConnected;
+        return authStatus.googleAuthenticated && authStatus.composioConnected && !authStatus.isCheckingAuth;
       case 2:
         return data.name.trim().length > 0;
       case 3:
@@ -310,8 +343,27 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             </p>
             
             <div className="max-w-md mx-auto space-y-6">
+              {/* Checking Authentication Status */}
+              {authStatus.isCheckingAuth && (
+                <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
+                  <div className="text-center space-y-4">
+                    <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
+                      <Loader2 className="h-8 w-8 text-white animate-spin" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        Checking Authentication Status
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Verifying your Google Calendar connection...
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Single Authentication Flow */}
-              {!authStatus.googleAuthenticated ? (
+              {!authStatus.isCheckingAuth && !authStatus.googleAuthenticated && (
                 <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
                   <div className="text-center space-y-4">
                     <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
@@ -352,7 +404,10 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     </button>
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {/* Authentication Success States */}
+              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && (
                 <div className="space-y-4">
                   {/* Google Authentication Success */}
                   <div className="p-4 border-2 border-green-200 bg-green-50 rounded-xl">
@@ -421,14 +476,14 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
                   <div className="flex items-start space-x-3">
                     <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
-                    <div>
+                    <div className="flex-1">
                       <p className="font-medium text-red-900">Authentication Error</p>
                       <p className="text-sm text-red-700">{authError}</p>
                       <button
-                        onClick={() => setAuthError(null)}
-                        className="text-sm text-red-600 underline hover:no-underline mt-1"
+                        onClick={handleRetryAuth}
+                        className="text-sm text-red-600 underline hover:no-underline mt-2"
                       >
-                        Dismiss
+                        Retry Authentication Check
                       </button>
                     </div>
                   </div>
@@ -436,7 +491,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               )}
 
               {/* Success State */}
-              {authStatus.googleAuthenticated && authStatus.composioConnected && (
+              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && authStatus.composioConnected && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                   <div className="flex items-center space-x-3">
                     <Check className="h-5 w-5 text-green-600" />
