@@ -113,6 +113,38 @@ async function getUserTools(userEmail) {
   }
 }
 
+// Helper function to check if connection is active
+async function checkConnectionStatus(userEmail) {
+  try {
+    const connectionData = userConnections.get(userEmail);
+    const entityId = userEntities.get(userEmail);
+    
+    if (!connectionData || !entityId) {
+      return { status: 'not_found', message: 'No connection found' };
+    }
+    
+    // Try to get tools to verify connection is working
+    const tools = await getUserTools(userEmail);
+    
+    if (tools && Object.keys(tools).length > 0) {
+      // Update status to active if tools are available
+      connectionData.status = 'active';
+      userConnections.set(userEmail, connectionData);
+      
+      return { 
+        status: 'active', 
+        message: 'Connection is active',
+        toolsAvailable: Object.keys(tools).length
+      };
+    } else {
+      return { status: 'pending', message: 'Connection pending authentication' };
+    }
+  } catch (error) {
+    console.error(`❌ Error checking connection status for ${userEmail}:`, error);
+    return { status: 'error', message: error.message };
+  }
+}
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
@@ -211,26 +243,42 @@ app.post('/api/ai/send-message', async (req, res) => {
     
     console.log(`💬 Processing AI message for ${userEmail}: "${message}"`);
     
-    // Check if user has Composio connection
-    const connectionData = userConnections.get(userEmail);
-    if (!connectionData) {
+    // Check connection status
+    const connectionStatus = await checkConnectionStatus(userEmail);
+    
+    if (connectionStatus.status === 'not_found') {
       return res.json({
         success: true,
         response: {
-          message: `Hi ${userEmail}! To manage your Google Calendar with AI, I need to connect to your account first. Please use the "Setup Connection" button to authenticate with Google Calendar through Composio.`,
-          needsConnection: true
+          message: `Hi! To manage your Google Calendar with AI, I need to connect to your account first. Please use the "Setup Connection" button to authenticate with Google Calendar through Composio.`,
+          needsConnection: true,
+          userEmail: userEmail
         },
         timestamp: new Date().toISOString()
       });
     }
     
-    if (connectionData.status === 'pending') {
+    if (connectionStatus.status === 'pending') {
+      const connectionData = userConnections.get(userEmail);
       return res.json({
         success: true,
         response: {
-          message: `Hi ${userEmail}! Your Google Calendar connection is pending. Please complete the authentication process using this link: ${connectionData.redirectUrl}`,
+          message: `Hi! Your Google Calendar connection is pending. Please complete the authentication process using the provided link.`,
           needsConnection: true,
-          redirectUrl: connectionData.redirectUrl
+          redirectUrl: connectionData?.redirectUrl,
+          userEmail: userEmail
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (connectionStatus.status === 'error') {
+      return res.json({
+        success: true,
+        response: {
+          message: `There's an issue with your Google Calendar connection: ${connectionStatus.message}. Please try reconnecting.`,
+          needsConnection: true,
+          userEmail: userEmail
         },
         timestamp: new Date().toISOString()
       });
@@ -272,7 +320,15 @@ You have access to Google Calendar tools to help manage ${userEmail}'s calendar.
 - Delete events
 - Quick add events using natural language
 
-Please help ${userEmail} with their calendar request. If they want to schedule something, use the appropriate calendar tools. Always be helpful and confirm what actions you're taking.`;
+Please help ${userEmail} with their calendar request. If they want to schedule something, use the appropriate calendar tools. Always be helpful and confirm what actions you're taking.
+
+Important: When creating events, always include specific details like:
+- Clear event title
+- Specific date and time
+- Duration or end time
+- Any relevant description
+
+Be conversational and friendly in your responses.`;
     
     console.log(`🤖 Sending request to OpenAI for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
     
@@ -292,7 +348,9 @@ Please help ${userEmail} with their calendar request. If they want to schedule s
 Tool calls: ${JSON.stringify(output.toolCalls)}
 Results: ${JSON.stringify(output.toolResults)}
 
-Provide a friendly, conversational summary of what was accomplished for ${userEmail}. If calendar events were created, updated, or managed, mention the specific details. If there were any issues, explain them clearly. Keep the tone helpful and personal.`,
+Provide a friendly, conversational summary of what was accomplished for ${userEmail}. If calendar events were created, updated, or managed, mention the specific details. If there were any issues, explain them clearly. Keep the tone helpful and personal.
+
+If no calendar operations were performed, just provide a helpful response to their message.`,
       maxToolRoundtrips: 1,
     });
     
@@ -362,30 +420,19 @@ app.post('/api/composio/test-connection', async (req, res) => {
     
     console.log(`🧪 Testing connection for user: ${userEmail}`);
     
+    const connectionStatus = await checkConnectionStatus(userEmail);
     const connectionData = userConnections.get(userEmail);
     const entityId = userEntities.get(userEmail);
     
-    if (!connectionData || !entityId) {
-      return res.json({
-        success: false,
-        error: `No connection found for user: ${userEmail}`,
-        userEmail,
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    // Try to get tools to test the connection
-    try {
-      const tools = await getUserTools(userEmail);
-      
+    if (connectionStatus.status === 'active') {
       const testResult = {
         status: 'success',
         message: `Connection test successful for ${userEmail}`,
         userEmail: userEmail,
         entityId: entityId,
-        connectionId: connectionData.connectionId,
-        connectionStatus: connectionData.status,
-        toolsAvailable: tools ? Object.keys(tools).length : 0,
+        connectionId: connectionData?.connectionId,
+        connectionStatus: connectionStatus.status,
+        toolsAvailable: connectionStatus.toolsAvailable || 0,
         features: {
           googleCalendarIntegration: 'active',
           composioTools: 'available',
@@ -400,15 +447,13 @@ app.post('/api/composio/test-connection', async (req, res) => {
         testResult,
         timestamp: new Date().toISOString()
       });
-      
-    } catch (toolError) {
-      console.error(`❌ Tool test failed for ${userEmail}:`, toolError);
-      
+    } else {
       res.json({
         success: false,
-        error: `Tool access failed for ${userEmail}: ${toolError.message}`,
+        error: `Connection test failed for ${userEmail}: ${connectionStatus.message}`,
         userEmail,
         connectionData,
+        connectionStatus: connectionStatus.status,
         timestamp: new Date().toISOString()
       });
     }

@@ -192,6 +192,34 @@ class ComposioService {
   getBaseUrl(): string {
     return this.baseUrl;
   }
+
+  /**
+   * Extract real user email from Composio authentication
+   * This would be called after successful Composio authentication
+   */
+  async getAuthenticatedUserEmail(entityId: string): Promise<string | null> {
+    try {
+      console.log('🔍 Getting authenticated user email for entity:', entityId);
+      
+      // In a real implementation, this would call Composio API to get user info
+      // For now, we'll extract from the entity ID or use a placeholder
+      
+      // If entity ID follows pattern like "user_timestamp@temp.local", extract it
+      if (entityId.includes('@')) {
+        return entityId;
+      }
+      
+      // Otherwise, we'd need to call Composio API to get the actual authenticated email
+      // This is a placeholder - in production you'd call:
+      // const userInfo = await composio.getEntityUserInfo(entityId);
+      // return userInfo.email;
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Error getting authenticated user email:', error);
+      return null;
+    }
+  }
 }
 
 export const composioService = new ComposioService();
