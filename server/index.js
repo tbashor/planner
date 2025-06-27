@@ -19,6 +19,28 @@ app.use(express.json());
 const userConnections = new Map();
 const userAgents = new Map();
 
+// Root endpoint - redirect to client
+app.get('/', (req, res) => {
+  res.json({
+    message: 'SmartPlan API Server',
+    status: 'running',
+    clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+    endpoints: {
+      health: '/api/health',
+      userConnection: '/api/user/connect-google-calendar',
+      lettaHealthCheck: '/api/letta/health-check',
+      lettaSendMessage: '/api/letta/send-message',
+      lettaGenerateSuggestions: '/api/letta/generate-suggestions',
+      composioConnect: '/api/composio/connect-google-calendar',
+      composioConnections: '/api/composio/connections',
+      composioTest: '/api/composio/test-connection',
+      stats: '/api/stats'
+    },
+    note: 'This is an API server. Visit the client URL above to use the application.',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -401,6 +423,19 @@ app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     path: req.originalUrl,
+    availableEndpoints: [
+      'GET /',
+      'GET /api/health',
+      'POST /api/user/connect-google-calendar',
+      'POST /api/letta/health-check',
+      'POST /api/letta/send-message',
+      'POST /api/letta/generate-suggestions',
+      'POST /api/composio/connect-google-calendar',
+      'GET /api/composio/connections',
+      'POST /api/composio/test-connection',
+      'GET /api/stats'
+    ],
+    note: 'This is an API server. Visit http://localhost:5173 for the client application.',
     timestamp: new Date().toISOString()
   });
 });
@@ -413,6 +448,7 @@ app.listen(PORT, () => {
   console.log(`🔗 CORS enabled for: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
   console.log('');
   console.log('📋 Available endpoints:');
+  console.log('  GET  /');
   console.log('  GET  /api/health');
   console.log('  POST /api/user/connect-google-calendar');
   console.log('  POST /api/letta/health-check');
@@ -426,6 +462,11 @@ app.listen(PORT, () => {
   console.log('✅ Server is ready to handle requests!');
   console.log('💡 The server provides intelligent AI responses and user-specific Google Calendar integration.');
   console.log('🔧 All TypeScript dependencies removed - running pure JavaScript for maximum compatibility.');
+  console.log('');
+  console.log('🎯 To use the application:');
+  console.log('   👉 Visit: http://localhost:5173');
+  console.log('   📱 This server (port 3001) is the API backend');
+  console.log('   🖥️  The client app (port 5173) is the user interface');
 });
 
 export default app;
