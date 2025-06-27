@@ -33,7 +33,6 @@ export default function AiSidebar() {
   const [testResults, setTestResults] = useState<any>(null);
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
-  const [isConnectingComposio, setIsConnectingComposio] = useState(false);
 
   // Get the authenticated user email from the app state
   const getAuthenticatedUserEmail = (): string | null => {
@@ -98,58 +97,6 @@ export default function AiSidebar() {
       setConnectionStatus('error');
       setComposioConnectionError('Failed to check Composio connection');
       console.error('❌ Error checking Composio connection:', error);
-    }
-  };
-
-  const handleSetupConnection = async () => {
-    const userEmail = getAuthenticatedUserEmail();
-    if (!userEmail) {
-      setComposioConnectionError('Please complete onboarding first');
-      return;
-    }
-
-    setIsConnectingComposio(true);
-    setComposioConnectionError(null);
-
-    try {
-      console.log(`🔗 Setting up Composio connection with popup for ${userEmail}`);
-      
-      const success = await composioService.authenticateWithPopup(userEmail);
-      
-      if (success) {
-        setIsComposioConnected(true);
-        setConnectionStatus('active');
-        setComposioConnectionError(null);
-        
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: `composio_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'ai',
-            content: `🎉 Perfect! Your Composio connection for ${userEmail} is now active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      } else {
-        throw new Error('Authentication was not completed');
-      }
-    } catch (error) {
-      console.error('❌ Error setting up Composio connection:', error);
-      setComposioConnectionError(error instanceof Error ? error.message : 'Failed to setup Composio connection');
-      setIsComposioConnected(false);
-      setConnectionStatus('error');
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `composio_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: `❌ Failed to setup Composio connection: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } finally {
-      setIsConnectingComposio(false);
     }
   };
 
@@ -248,7 +195,7 @@ export default function AiSidebar() {
         payload: {
           id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: "I'm having trouble processing that request right now. Please check your Composio connection and try again.",
+          content: "I'm having trouble processing that request right now. Please check your connection and try again.",
           timestamp: new Date().toISOString(),
         },
       });
@@ -320,7 +267,7 @@ export default function AiSidebar() {
           payload: {
             id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `❌ Connection test failed for ${userEmail}: ${result.error}. Please setup your Composio connection first.`,
+            content: `❌ Connection test failed for ${userEmail}: ${result.error}. Your connections were set up during onboarding, so this might be a temporary issue.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -386,7 +333,7 @@ export default function AiSidebar() {
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
             <div className="font-medium text-green-600">User: {displayUserEmail}</div>
-            <div>Composio Status: {connectionStatus}</div>
+            <div>Status: {connectionStatus}</div>
             <div className="flex items-center space-x-2 mt-1">
               <Calendar className="h-3 w-3" />
               <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
@@ -556,7 +503,7 @@ export default function AiSidebar() {
         </div>
       </div>
 
-      {/* Composio Settings */}
+      {/* Connection Status */}
       <div className={`border-t p-4 flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
@@ -568,7 +515,7 @@ export default function AiSidebar() {
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Composio Integration
+              Connection Status
             </h3>
           </div>
           <button
@@ -585,24 +532,6 @@ export default function AiSidebar() {
 
         {showComposioSettings && (
           <div className="space-y-3 mb-3">
-            {/* Setup Connection Button */}
-            {displayUserEmail && !isComposioConnected && (
-              <button
-                onClick={handleSetupConnection}
-                disabled={!serverAvailable || isConnectingComposio}
-                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  !serverAvailable || isConnectingComposio
-                    ? 'opacity-50 cursor-not-allowed'
-                    : state.isDarkMode
-                    ? 'bg-green-600 text-white hover:bg-green-700'
-                    : 'bg-green-500 text-white hover:bg-green-600'
-                }`}
-              >
-                <Link className="h-3 w-3" />
-                <span>{isConnectingComposio ? 'Connecting...' : 'Setup Composio Connection'}</span>
-              </button>
-            )}
-
             {/* Test Connection Button */}
             {displayUserEmail && (
               <button
@@ -646,13 +575,13 @@ export default function AiSidebar() {
           <div className="flex items-center space-x-1 mb-1">
             <Link className="h-3 w-3" />
             <span className="font-medium">
-              {isComposioConnected ? 'Composio Connected' : 'Setup Required'}
+              {isComposioConnected ? 'All Systems Connected' : 'Connection Issue'}
             </span>
           </div>
           <p>
             {isComposioConnected 
               ? `Your Google Calendar (${displayUserEmail}) is connected via Composio. I can create, update, and manage events using AI commands.`
-              : `Connect your Google Calendar through Composio to enable AI-powered calendar management for ${displayUserEmail || 'your account'}.`
+              : `Your connections were set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
             }
           </p>
         </div>
