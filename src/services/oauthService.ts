@@ -32,12 +32,12 @@ class OAuthService {
   private readonly TOKEN_STORAGE_KEY = 'oauth_tokens';
 
   constructor() {
-    // OAuth 2.0 Configuration
+    // OAuth 2.0 Configuration with proper scopes
     this.config = {
       clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
       clientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '',
       redirectUri: this.getRedirectUri(),
-      scope: 'https://www.googleapis.com/auth/calendar',
+      scope: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid email profile',
       authEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
       tokenEndpoint: 'https://oauth2.googleapis.com/token',
     };
@@ -198,6 +198,7 @@ class OAuthService {
     console.log(`- State: ${state}`);
     console.log(`- Redirect URI: ${this.config.redirectUri}`);
     console.log(`- PKCE Enabled: ${usePKCE}`);
+    console.log(`- Scopes: ${this.config.scope}`);
     
     return authUrl;
   }
@@ -438,7 +439,7 @@ class OAuthService {
   }
 
   /**
-   * Make authenticated API request
+   * Make authenticated API request with better error handling
    */
   async makeAuthenticatedRequest(url: string, options: RequestInit = {}): Promise<Response> {
     const accessToken = await this.getValidAccessToken();
@@ -447,16 +448,21 @@ class OAuthService {
       throw new Error('No valid access token available');
     }
 
+    console.log('🔍 Making authenticated request to:', url);
+    console.log('🔑 Using access token:', accessToken.substring(0, 20) + '...');
+
     const authenticatedOptions = {
       ...options,
       headers: {
         'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
+        'Accept': 'application/json',
         ...options.headers,
       },
     };
 
     const response = await fetch(url, authenticatedOptions);
+
+    console.log('📥 Response status:', response.status, response.statusText);
 
     // Handle token expiration
     if (response.status === 401) {
@@ -469,7 +475,11 @@ class OAuthService {
           ...authenticatedOptions.headers,
           'Authorization': `Bearer ${refreshedTokens.access_token}`,
         };
-        return fetch(url, authenticatedOptions);
+        
+        console.log('🔄 Retrying request with refreshed token...');
+        const retryResponse = await fetch(url, authenticatedOptions);
+        console.log('📥 Retry response status:', retryResponse.status, retryResponse.statusText);
+        return retryResponse;
       } else {
         throw new Error('Authentication failed - please re-authorize');
       }
