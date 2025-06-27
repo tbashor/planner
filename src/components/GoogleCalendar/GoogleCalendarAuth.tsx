@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key, TestTube, Zap, Link } from 'lucide-react';
+import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key, TestTube, Zap, Link, Server } from 'lucide-react';
 import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
 import { serverApiService } from '../../services/serverApiService';
@@ -17,9 +17,11 @@ export default function GoogleCalendarAuth() {
   const [isTestingComposio, setIsTestingComposio] = useState(false);
   const [isConnectedToServer, setIsConnectedToServer] = useState(false);
   const [isConnectingToServer, setIsConnectingToServer] = useState(false);
+  const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     checkAuthenticationStatus();
+    checkServerAvailability();
   }, []);
 
   useEffect(() => {
@@ -27,6 +29,17 @@ export default function GoogleCalendarAuth() {
       loadCalendars();
     }
   }, [isAuthenticated]);
+
+  const checkServerAvailability = async () => {
+    try {
+      const available = await serverApiService.isServerAvailable();
+      setServerAvailable(available);
+      console.log('🌐 Server availability:', available);
+    } catch (error) {
+      setServerAvailable(false);
+      console.warn('⚠️ Server check failed:', error);
+    }
+  };
 
   const checkAuthenticationStatus = () => {
     const authenticated = oauthService.isAuthenticated();
@@ -64,7 +77,12 @@ export default function GoogleCalendarAuth() {
 
   const handleConnectToServer = async () => {
     if (!isAuthenticated || !state.user?.email) {
-      setError('Please authenticate with Google Calendar first');
+      setError('Please authenticate with Google Calendar first and complete onboarding');
+      return;
+    }
+
+    if (!serverAvailable) {
+      setError('Server is not available. Please make sure the server is running on port 3001.');
       return;
     }
 
@@ -82,7 +100,7 @@ export default function GoogleCalendarAuth() {
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
-            id: Date.now().toString(),
+            id: `server_connect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
             content: `🎉 Excellent! Your Google Calendar is now fully integrated with the AI assistant. I can now directly create, update, and manage events in your Google Calendar using natural language commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "create a workout session for Friday morning"!`,
             timestamp: new Date().toISOString(),
@@ -114,7 +132,7 @@ export default function GoogleCalendarAuth() {
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `signout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ai',
         content: 'Google Calendar has been disconnected. Your Google Calendar events have been removed, but your local events are still available.',
         timestamp: new Date().toISOString(),
@@ -151,7 +169,7 @@ export default function GoogleCalendarAuth() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `📅 Synced ${googleEvents.length} events from Google Calendar! Your schedule is now up to date. I can see all your Google Calendar events and will help you plan around them. You can now drag and edit these events directly!`,
           timestamp: new Date().toISOString(),
@@ -163,7 +181,7 @@ export default function GoogleCalendarAuth() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `sync_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: '⚠️ I had trouble syncing your Google Calendar events. Please check your connection and try again.',
           timestamp: new Date().toISOString(),
@@ -180,7 +198,7 @@ export default function GoogleCalendarAuth() {
     setError(null);
 
     try {
-      console.log('🧪 Testing Composio connection...');
+      console.log('🧪 Testing server integration...');
       
       // Test server health first
       const healthCheck = await serverApiService.checkServerHealth();
@@ -210,16 +228,16 @@ export default function GoogleCalendarAuth() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `🧪 Composio connection test completed! ${googleCalendarTest.success ? `Google Calendar connection initiated successfully. Redirect URL: ${googleCalendarTest.redirectUrl}` : 'There was an issue with the Google Calendar connection.'}`,
+          content: `🧪 Server integration test completed! ${googleCalendarTest.success ? `Google Calendar connection initiated successfully. Redirect URL: ${googleCalendarTest.redirectUrl}` : 'There was an issue with the Google Calendar connection.'}`,
           timestamp: new Date().toISOString(),
         },
       });
 
     } catch (err: any) {
-      console.error('❌ Composio test failed:', err);
-      setError(`Composio test failed: ${err.message}`);
+      console.error('❌ Server integration test failed:', err);
+      setError(`Server integration test failed: ${err.message}`);
       
       setComposioTestResults({
         error: err.message,
@@ -229,9 +247,9 @@ export default function GoogleCalendarAuth() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `test_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `❌ Composio test failed: ${err.message}. Please check the server logs for more details.`,
+          content: `❌ Server integration test failed: ${err.message}. Please check the server logs for more details.`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -268,7 +286,32 @@ export default function GoogleCalendarAuth() {
             state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
           }`} />
         )}
+        {serverAvailable !== null && (
+          <Server className={`h-3 w-3 ${
+            serverAvailable 
+              ? state.isDarkMode ? 'text-green-400' : 'text-green-600'
+              : state.isDarkMode ? 'text-red-400' : 'text-red-600'
+          }`} />
+        )}
       </div>
+
+      {/* Server Status */}
+      {serverAvailable === false && (
+        <div className={`mb-3 p-3 rounded-lg ${
+          state.isDarkMode 
+            ? 'bg-red-900 bg-opacity-20 text-red-400' 
+            : 'bg-red-50 text-red-600'
+        }`}>
+          <div className="flex items-start space-x-2">
+            <Server className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            <div className="text-xs">
+              <p className="font-medium mb-1">Server Not Available</p>
+              <p>The server is not running on port 3001. Please start the server with:</p>
+              <code className="block mt-1 p-1 bg-black bg-opacity-20 rounded text-xs">npm run dev</code>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className={`mb-3 p-3 rounded-lg ${
@@ -286,7 +329,7 @@ export default function GoogleCalendarAuth() {
         </div>
       )}
 
-      {/* Composio Test Section */}
+      {/* Server Integration Test Section */}
       <div className={`mb-3 p-3 rounded-lg ${
         state.isDarkMode ? 'bg-purple-900 bg-opacity-20' : 'bg-purple-50'
       }`}>
@@ -321,9 +364,9 @@ export default function GoogleCalendarAuth() {
 
             <button
               onClick={testComposioConnection}
-              disabled={isTestingComposio}
+              disabled={isTestingComposio || !serverAvailable}
               className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                isTestingComposio
+                isTestingComposio || !serverAvailable
                   ? 'opacity-50 cursor-not-allowed'
                   : state.isDarkMode
                   ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -434,7 +477,7 @@ export default function GoogleCalendarAuth() {
           </div>
 
           {/* Server Integration Status */}
-          {!isConnectedToServer && (
+          {!isConnectedToServer && serverAvailable && (
             <div className={`p-3 rounded-lg text-xs ${
               state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
             }`}>

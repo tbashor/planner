@@ -49,6 +49,7 @@ class ServerApiService {
   private baseUrl: string;
 
   constructor() {
+    // Use the correct server port (3001) instead of Vite dev server port (5173)
     this.baseUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
     console.log('🌐 Server API Service initialized:', this.baseUrl);
   }
@@ -63,6 +64,8 @@ class ServerApiService {
     try {
       const url = `${this.baseUrl}${endpoint}`;
       
+      console.log('📤 Making request to:', url);
+      
       const response = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
@@ -76,7 +79,9 @@ class ServerApiService {
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+      console.log('📥 Response received:', result);
+      return result;
     } catch (error) {
       console.error(`❌ Server API request failed (${endpoint}):`, error);
       throw error;
