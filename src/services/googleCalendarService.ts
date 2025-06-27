@@ -69,20 +69,102 @@ class GoogleCalendarService {
     try {
       console.log('🔍 Retrieving authenticated user email from Google...');
       
-      // Use the correct Google userinfo endpoint
-      const response = await oauthService.makeAuthenticatedRequest('https://www.googleapis.com/oauth2/v1/userinfo?alt=json');
-      
-      if (response.ok) {
-        const userInfo = await response.json();
-        console.log('✅ Retrieved authenticated user info from Google:', userInfo);
-        return userInfo.email;
-      } else {
-        console.warn('⚠️ Failed to get user info from Google API:', response.status, response.statusText);
-        return null;
+      // Try multiple Google userinfo endpoints
+      const endpoints = [
+        'https://www.googleapis.com/oauth2/v2/userinfo',
+        'https://www.googleapis.com/oauth2/v1/userinfo',
+        'https://openidconnect.googleapis.com/v1/userinfo',
+        'https://www.googleapis.com/plus/v1/people/me'
+      ];
+
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`🔍 Trying endpoint: ${endpoint}`);
+          const response = await oauthService.makeAuthenticatedRequest(endpoint);
+          
+          if (response.ok) {
+            const userInfo = await response.json();
+            console.log('✅ Retrieved user info from Google:', userInfo);
+            
+            // Extract email from different possible fields
+            const email = userInfo.email || userInfo.emailAddress || userInfo.emails?.[0]?.value;
+            
+            if (email && email !== 'authenticated.user@gmail.com') {
+              console.log('✅ Successfully retrieved real user email:', email);
+              return email;
+            } else {
+              console.warn('⚠️ No valid email found in response:', userInfo);
+            }
+          } else {
+            console.warn(`⚠️ Failed to get user info from ${endpoint}:`, response.status, response.statusText);
+            
+            // Log response body for debugging
+            try {
+              const errorBody = await response.text();
+              console.warn('Error response body:', errorBody);
+            } catch (e) {
+              // Ignore error reading response body
+            }
+          }
+        } catch (endpointError) {
+          console.warn(`⚠️ Error with endpoint ${endpoint}:`, endpointError);
+          continue; // Try next endpoint
+        }
       }
+
+      // If all endpoints fail, try to extract email from token payload
+      console.log('🔍 All userinfo endpoints failed, trying to extract from token...');
+      const tokens = oauthService.getStoredTokens();
+      
+      if (tokens?.access_token) {
+        try {
+          // Try to decode JWT token if it's a JWT
+          const tokenParts = tokens.access_token.split('.');
+          if (tokenParts.length === 3) {
+            const payload = JSON.parse(atob(tokenParts[1]));
+            const email = payload.email || payload.sub;
+            if (email && email.includes('@')) {
+              console.log('✅ Extracted email from token payload:', email);
+              return email;
+            }
+          }
+        } catch (tokenError) {
+          console.warn('⚠️ Could not decode token:', tokenError);
+        }
+      }
+
+      console.error('❌ Could not retrieve user email from any source');
+      return null;
     } catch (error) {
       console.error('❌ Error getting authenticated user email:', error);
       return null;
+    }
+  }
+
+  /**
+   * Connect to server integration (for Composio) - only if we have a real email
+   */
+  async connectToServerIntegration(userEmail: string): Promise<void> {
+    try {
+      // Don't connect to server integration with fake emails
+      if (!userEmail || userEmail === 'authenticated.user@gmail.com' || !userEmail.includes('@')) {
+        console.warn('⚠️ Skipping server integration - no valid user email available');
+        return;
+      }
+
+      console.log('🔗 Connecting to server integration for:', userEmail);
+      
+      const tokens = oauthService.getStoredTokens();
+      if (!tokens) {
+        throw new Error('No OAuth tokens available');
+      }
+
+      // This would typically send the tokens to your server for Composio integration
+      // For now, we'll just log that the connection is established
+      console.log('✅ Server integration connection established for:', userEmail);
+    } catch (error) {
+      console.error('❌ Error connecting to server integration:', error);
+      throw error;
     }
   }
 
@@ -223,27 +305,6 @@ class GoogleCalendarService {
     } catch (error) {
       console.error('❌ Error deleting Google Calendar event:', error);
       return false;
-    }
-  }
-
-  /**
-   * Connect to server integration (for Composio)
-   */
-  async connectToServerIntegration(userEmail: string): Promise<void> {
-    try {
-      console.log('🔗 Connecting to server integration for:', userEmail);
-      
-      const tokens = oauthService.getStoredTokens();
-      if (!tokens) {
-        throw new Error('No OAuth tokens available');
-      }
-
-      // This would typically send the tokens to your server for Composio integration
-      // For now, we'll just log that the connection is established
-      console.log('✅ Server integration connection established for:', userEmail);
-    } catch (error) {
-      console.error('❌ Error connecting to server integration:', error);
-      throw error;
     }
   }
 
