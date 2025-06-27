@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
-    "dev:client": "vite",
+    "dev:client": "vite --port 5173 --host",
     "dev:server": "node server/index.js",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "server": "node server/index.js"
+    "preview": "vite preview --port 5173 --host",
+    "server": "node server/index.js",
+    "client": "vite --port 5173 --host"
   },
   "dependencies": {
     "@letta-ai/letta-client": "^0.1.132",
