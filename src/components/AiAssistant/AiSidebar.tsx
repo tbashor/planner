@@ -29,6 +29,29 @@ export default function AiSidebar() {
   const [lettaConnectionError, setLettaConnectionError] = useState<string | null>(null);
   const [currentUserAgent, setCurrentUserAgent] = useState<string | null>(null);
 
+  // Get the ACTUAL authenticated user email from the app state
+  const getAuthenticatedUserEmail = (): string | null => {
+    // First check if we have a user in state with email
+    if (state.user?.email) {
+      console.log('🔍 Found user email in state:', state.user.email);
+      return state.user.email;
+    }
+
+    // Check if we have Google Calendar tokens which might contain user info
+    try {
+      const tokens = localStorage.getItem('oauth_tokens');
+      if (tokens) {
+        const tokenData = JSON.parse(tokens);
+        console.log('🔍 Found OAuth tokens, but no user email in tokens');
+      }
+    } catch (error) {
+      console.warn('Could not parse OAuth tokens:', error);
+    }
+
+    console.warn('⚠️ No authenticated user email found');
+    return null;
+  };
+
   // Check Letta agent connection on component mount and when user changes
   useEffect(() => {
     checkLettaConnection();
@@ -36,8 +59,9 @@ export default function AiSidebar() {
 
   const checkLettaConnection = async () => {
     try {
-      // Always pass user email for user-specific agent connection
-      const userEmail = state.user?.email;
+      // Get the REAL authenticated user email
+      const userEmail = getAuthenticatedUserEmail();
+      
       if (!userEmail) {
         setIsLettaConnected(false);
         setLettaConnectionError('Please complete onboarding to get your personal AI agent');
@@ -45,7 +69,7 @@ export default function AiSidebar() {
         return;
       }
 
-      console.log(`🔍 Checking Letta connection for user: ${userEmail}`);
+      console.log(`🔍 Checking Letta connection for AUTHENTICATED user: ${userEmail}`);
       const isHealthy = await lettaService.healthCheck(userEmail);
       setIsLettaConnected(isHealthy);
       
@@ -68,7 +92,7 @@ export default function AiSidebar() {
       // Get the specific error message from the Letta service
       const lastError = lettaService.getLastError();
       setLettaConnectionError(lastError || 'Personal Letta agent connection failed');
-      console.error(`❌ Error checking Letta connection for ${state.user?.email}:`, error);
+      console.error(`❌ Error checking Letta connection:`, error);
     }
   };
 
@@ -77,7 +101,8 @@ export default function AiSidebar() {
     if (!chatInput.trim()) return;
 
     const userMessage = chatInput.trim();
-    const userEmail = state.user?.email;
+    // Get the REAL authenticated user email
+    const userEmail = getAuthenticatedUserEmail();
 
     if (!userEmail) {
       dispatch({
@@ -108,14 +133,14 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      console.log(`💬 Sending message to user-specific agent for ${userEmail}`);
+      console.log(`💬 Sending message to user-specific agent for AUTHENTICATED user: ${userEmail}`);
       
-      // Send message to user-specific Letta agent
+      // Send message to user-specific Letta agent with CORRECT email
       const lettaResponse = await lettaService.sendMessage(userMessage, {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
-        userEmail: userEmail, // Always include user email for user-specific agent
+        userEmail: userEmail, // Use the REAL authenticated email
       });
 
       // If Letta returned a parsed event, add it to the calendar
@@ -191,7 +216,8 @@ export default function AiSidebar() {
   const handleGenerateNewIdeas = async () => {
     if (!state.user?.preferences) return;
 
-    const userEmail = state.user?.email;
+    // Get the REAL authenticated user email
+    const userEmail = getAuthenticatedUserEmail();
     if (!userEmail) {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
@@ -213,14 +239,14 @@ export default function AiSidebar() {
     });
 
     try {
-      console.log(`💡 Generating suggestions for user: ${userEmail}`);
+      console.log(`💡 Generating suggestions for AUTHENTICATED user: ${userEmail}`);
       
-      // Generate new suggestions using user-specific Letta agent
+      // Generate new suggestions using user-specific Letta agent with CORRECT email
       const newSuggestions = await lettaService.generateSuggestions(
         state.events,
         state.user!.preferences,
         new Date(),
-        userEmail // Always include user email for user-specific suggestions
+        userEmail // Use the REAL authenticated email
       );
 
       newSuggestions.forEach(suggestion => {
@@ -253,6 +279,9 @@ export default function AiSidebar() {
       setIsGenerating(false);
     }
   };
+
+  // Get the real authenticated user email for display
+  const displayUserEmail = getAuthenticatedUserEmail();
 
   return (
     <div className={`w-80 h-full border-r flex flex-col ${
@@ -298,18 +327,28 @@ export default function AiSidebar() {
           </div>
         </div>
         
-        {/* User-Specific Agent Info */}
-        {state.user?.email && (
+        {/* User-Specific Agent Info - Show REAL authenticated email */}
+        {displayUserEmail && (
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <div>User: {state.user.email}</div>
+            <div className="font-medium text-green-600">Authenticated User: {displayUserEmail}</div>
             {currentUserAgent && (
               <div>Agent: {currentUserAgent}</div>
             )}
             {isLettaConnected && (
-              <div className="text-green-500 mt-1">✓ Personal agent active</div>
+              <div className="text-green-500 mt-1">✓ Personal agent active for {displayUserEmail}</div>
             )}
+          </div>
+        )}
+        
+        {/* Show warning if no authenticated user */}
+        {!displayUserEmail && (
+          <div className={`mt-2 text-xs ${
+            state.isDarkMode ? 'text-red-400' : 'text-red-600'
+          }`}>
+            <div>⚠️ No authenticated user detected</div>
+            <div>Please complete onboarding and Google Calendar authentication</div>
           </div>
         )}
         
@@ -356,10 +395,10 @@ export default function AiSidebar() {
               <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Start a conversation with your personal AI agent</p>
               <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
-              {state.user?.email && currentUserAgent && (
+              {displayUserEmail && currentUserAgent && (
                 <div className="text-xs mt-2 opacity-75">
                   <p>Your personal agent: {currentUserAgent}</p>
-                  <p>Connected to: {state.user.email}</p>
+                  <p>Connected to: {displayUserEmail}</p>
                 </div>
               )}
             </div>
@@ -418,38 +457,38 @@ export default function AiSidebar() {
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={
-                !state.user?.email 
+                !displayUserEmail 
                   ? "Complete onboarding to get your personal agent..."
                   : isLettaConnected 
                     ? "Ask your personal agent to manage your calendar..." 
                     : "Personal agent is offline"
               }
-              disabled={isProcessingMessage || !isLettaConnected || !state.user?.email}
+              disabled={isProcessingMessage || !isLettaConnected || !displayUserEmail}
               className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 state.isDarkMode
                   ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                   : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-              } ${(isProcessingMessage || !isLettaConnected || !state.user?.email) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isProcessingMessage || !isLettaConnected || !displayUserEmail) ? 'opacity-50 cursor-not-allowed' : ''}`}
             />
             {state.user?.preferences.voiceInput && (
               <button
                 type="button"
                 onClick={handleVoiceInput}
-                disabled={isProcessingMessage || !isLettaConnected || !state.user?.email}
+                disabled={isProcessingMessage || !isLettaConnected || !displayUserEmail}
                 className={`p-2 rounded-lg transition-colors duration-200 ${
                   isListening
                     ? 'bg-red-500 text-white'
                     : state.isDarkMode
                     ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                } ${(isProcessingMessage || !isLettaConnected || !state.user?.email) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${(isProcessingMessage || !isLettaConnected || !displayUserEmail) ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Mic className="h-4 w-4" />
               </button>
             )}
             <button
               type="submit"
-              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected || !state.user?.email}
+              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected || !displayUserEmail}
               className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
             >
               <Send className="h-4 w-4" />
@@ -460,7 +499,7 @@ export default function AiSidebar() {
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            {!state.user?.email ? (
+            {!displayUserEmail ? (
               <p>🔐 Complete onboarding to get your personal AI agent</p>
             ) : isLettaConnected ? (
               <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
@@ -488,9 +527,9 @@ export default function AiSidebar() {
           </div>
           <button
             onClick={handleGenerateNewIdeas}
-            disabled={isGenerating || !state.user?.preferences || !isLettaConnected || !state.user?.email}
+            disabled={isGenerating || !state.user?.preferences || !isLettaConnected || !displayUserEmail}
             className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              (isGenerating || !isLettaConnected || !state.user?.email)
+              (isGenerating || !isLettaConnected || !displayUserEmail)
                 ? 'opacity-50 cursor-not-allowed'
                 : state.isDarkMode
                 ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -508,7 +547,7 @@ export default function AiSidebar() {
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              {!state.user?.email ? (
+              {!displayUserEmail ? (
                 <p className="text-xs">Complete onboarding to get personal suggestions</p>
               ) : isLettaConnected ? (
                 <p className="text-xs">Click "Generate" for personalized suggestions from your agent</p>

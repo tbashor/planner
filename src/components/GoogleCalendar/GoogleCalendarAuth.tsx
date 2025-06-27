@@ -52,6 +52,18 @@ export default function GoogleCalendarAuth() {
     }
   };
 
+  // Get the REAL authenticated user email
+  const getAuthenticatedUserEmail = (): string | null => {
+    // First check if we have a user in state with email
+    if (state.user?.email) {
+      console.log('🔍 Found authenticated user email:', state.user.email);
+      return state.user.email;
+    }
+
+    console.warn('⚠️ No authenticated user email found in state');
+    return null;
+  };
+
   const handleConnect = async () => {
     setError(null);
     setIsLoading(true);
@@ -76,7 +88,10 @@ export default function GoogleCalendarAuth() {
   };
 
   const handleConnectToServer = async () => {
-    if (!isAuthenticated || !state.user?.email) {
+    // Get the REAL authenticated user email
+    const userEmail = getAuthenticatedUserEmail();
+    
+    if (!isAuthenticated || !userEmail) {
       setError('Please authenticate with Google Calendar first and complete onboarding');
       return;
     }
@@ -90,9 +105,10 @@ export default function GoogleCalendarAuth() {
     setError(null);
 
     try {
-      console.log('🔗 Connecting to server integration for user:', state.user.email);
+      console.log('🔗 Connecting to server integration for AUTHENTICATED user:', userEmail);
       
-      const success = await googleCalendarService.connectToServerIntegration(state.user.email);
+      // Use the REAL authenticated user email for server connection
+      const success = await googleCalendarService.connectToServerIntegration(userEmail);
       
       if (success) {
         setIsConnectedToServer(true);
@@ -102,7 +118,7 @@ export default function GoogleCalendarAuth() {
           payload: {
             id: `server_connect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `🎉 Excellent! Your Google Calendar is now fully integrated with the AI assistant. I can now directly create, update, and manage events in your Google Calendar using natural language commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "create a workout session for Friday morning"!`,
+            content: `🎉 Excellent! Your Google Calendar (${userEmail}) is now fully integrated with the AI assistant. I can now directly create, update, and manage events in your Google Calendar using natural language commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "create a workout session for Friday morning"!`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -166,12 +182,14 @@ export default function GoogleCalendarAuth() {
       
       dispatch({ type: 'SET_EVENTS', payload: allEvents });
       
+      const userEmail = getAuthenticatedUserEmail();
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `📅 Synced ${googleEvents.length} events from Google Calendar! Your schedule is now up to date. I can see all your Google Calendar events and will help you plan around them. You can now drag and edit these events directly!`,
+          content: `📅 Synced ${googleEvents.length} events from ${userEmail}'s Google Calendar! Your schedule is now up to date. I can see all your Google Calendar events and will help you plan around them. You can now drag and edit these events directly!`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -263,6 +281,9 @@ export default function GoogleCalendarAuth() {
     return config.redirectUri;
   };
 
+  // Get the authenticated user email for display
+  const displayUserEmail = getAuthenticatedUserEmail();
+
   return (
     <div className={`p-4 border-t ${
       state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
@@ -294,6 +315,15 @@ export default function GoogleCalendarAuth() {
           }`} />
         )}
       </div>
+
+      {/* Show authenticated user email */}
+      {displayUserEmail && (
+        <div className={`mb-3 p-2 rounded-lg ${
+          state.isDarkMode ? 'bg-green-900 bg-opacity-20 text-green-400' : 'bg-green-50 text-green-600'
+        }`}>
+          <div className="text-xs font-medium">Authenticated as: {displayUserEmail}</div>
+        </div>
+      )}
 
       {/* Server Status */}
       {serverAvailable === false && (
@@ -329,7 +359,7 @@ export default function GoogleCalendarAuth() {
         </div>
       )}
 
-      {/* Server Integration Test Section */}
+      {/* Composio Integration Test Section */}
       <div className={`mb-3 p-3 rounded-lg ${
         state.isDarkMode ? 'bg-purple-900 bg-opacity-20' : 'bg-purple-50'
       }`}>
@@ -341,7 +371,7 @@ export default function GoogleCalendarAuth() {
             <span className={`text-xs font-medium ${
               state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
             }`}>
-              Server Integration Test
+              Composio Integration Test
             </span>
           </div>
           <button
@@ -359,7 +389,7 @@ export default function GoogleCalendarAuth() {
             <p className={`text-xs ${
               state.isDarkMode ? 'text-purple-300' : 'text-purple-700'
             }`}>
-              Test the server-side Letta and Composio integration
+              Test the server-side Letta and Composio integration with user-specific agents
             </p>
 
             <button
@@ -374,7 +404,7 @@ export default function GoogleCalendarAuth() {
               }`}
             >
               <Zap className={`h-3 w-3 ${isTestingComposio ? 'animate-spin' : ''}`} />
-              <span>{isTestingComposio ? 'Testing...' : 'Test Server Integration'}</span>
+              <span>{isTestingComposio ? 'Testing...' : 'Test Composio Integration'}</span>
             </button>
 
             {/* Test Results */}
@@ -382,7 +412,7 @@ export default function GoogleCalendarAuth() {
               <div className={`p-3 rounded-lg text-xs ${
                 state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-gray-100 border border-gray-300'
               }`}>
-                <div className="font-medium mb-2">Test Results:</div>
+                <div className="font-medium mb-2">Composio Test Results:</div>
                 <pre className={`text-xs overflow-auto max-h-32 ${
                   state.isDarkMode ? 'text-gray-300' : 'text-gray-700'
                 }`}>
@@ -477,7 +507,7 @@ export default function GoogleCalendarAuth() {
           </div>
 
           {/* Server Integration Status */}
-          {!isConnectedToServer && serverAvailable && (
+          {!isConnectedToServer && serverAvailable && displayUserEmail && (
             <div className={`p-3 rounded-lg text-xs ${
               state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
             }`}>
@@ -485,13 +515,13 @@ export default function GoogleCalendarAuth() {
                 <Link className="h-4 w-4" />
                 <span className="font-medium">AI Integration Available</span>
               </div>
-              <p className="mb-3">Connect to enable AI-powered calendar management with direct Google Calendar integration.</p>
+              <p className="mb-3">Connect to enable AI-powered calendar management with direct Google Calendar integration for {displayUserEmail}.</p>
               
               <button
                 onClick={handleConnectToServer}
-                disabled={isConnectingToServer || !state.user?.email}
+                disabled={isConnectingToServer}
                 className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  isConnectingToServer || !state.user?.email
+                  isConnectingToServer
                     ? 'opacity-50 cursor-not-allowed'
                     : state.isDarkMode
                     ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -504,7 +534,7 @@ export default function GoogleCalendarAuth() {
             </div>
           )}
 
-          {isConnectedToServer && (
+          {isConnectedToServer && displayUserEmail && (
             <div className={`p-3 rounded-lg text-xs ${
               state.isDarkMode ? 'bg-purple-900 bg-opacity-20 text-purple-400' : 'bg-purple-50 text-purple-600'
             }`}>
@@ -512,7 +542,7 @@ export default function GoogleCalendarAuth() {
                 <Link className="h-4 w-4" />
                 <span className="font-medium">AI Integration Active</span>
               </div>
-              <p>Your Google Calendar is now fully integrated with the AI assistant. You can create, update, and manage events using natural language!</p>
+              <p>Your Google Calendar ({displayUserEmail}) is now fully integrated with the AI assistant. You can create, update, and manage events using natural language!</p>
             </div>
           )}
 
