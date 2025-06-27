@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { openai } from '@ai-sdk/openai';
+import { VercelAIToolSet } from 'composio-core';
+import { generateText } from 'ai';
 
 // Load environment variables
 dotenv.config();
@@ -15,30 +18,118 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// User-specific storage for connections and agents
-const userConnections = new Map(); // userEmail -> connection data
-const userAgents = new Map(); // userEmail -> agentId
+// Initialize Composio ToolSet
+const toolset = new VercelAIToolSet({
+  apiKey: process.env.COMPOSIO_API_KEY,
+});
 
-// Root endpoint - redirect to client
+// User-specific storage for connections and entities
+const userConnections = new Map(); // userEmail -> connection data
+const userEntities = new Map(); // userEmail -> entityId
+
+// Helper function to setup user connection if not exists
+async function setupUserConnectionIfNotExists(userEmail) {
+  try {
+    console.log(`🔗 Setting up Composio connection for user: ${userEmail}`);
+    
+    // Create entity ID based on user email (sanitized)
+    const entityId = userEmail.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    
+    // Store entity mapping
+    userEntities.set(userEmail, entityId);
+    
+    const entity = await toolset.client.getEntity(entityId);
+    
+    try {
+      // Try to get existing connection
+      const connection = await entity.getConnection({
+        app: 'googlecalendar',
+      });
+      
+      console.log(`✅ Found existing Google Calendar connection for ${userEmail}`);
+      
+      // Store connection info
+      userConnections.set(userEmail, {
+        entityId,
+        connectionId: connection.id,
+        status: 'active',
+        connectedAt: new Date().toISOString()
+      });
+      
+      return connection;
+    } catch (error) {
+      // No existing connection, create new one
+      console.log(`🔄 Creating new Google Calendar connection for ${userEmail}`);
+      
+      const newConnection = await entity.initiateConnection({
+        appName: 'googlecalendar',
+        entity: entityId
+      });
+      
+      console.log(`🔗 Google Calendar connection URL for ${userEmail}:`, newConnection.redirectUrl);
+      
+      // Store pending connection info
+      userConnections.set(userEmail, {
+        entityId,
+        connectionId: newConnection.id,
+        redirectUrl: newConnection.redirectUrl,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      });
+      
+      return newConnection;
+    }
+  } catch (error) {
+    console.error(`❌ Error setting up connection for ${userEmail}:`, error);
+    throw error;
+  }
+}
+
+// Helper function to get user-specific tools
+async function getUserTools(userEmail) {
+  try {
+    const entityId = userEntities.get(userEmail);
+    if (!entityId) {
+      throw new Error(`No entity found for user: ${userEmail}`);
+    }
+    
+    console.log(`🛠️ Getting tools for user ${userEmail} with entity ${entityId}`);
+    
+    const tools = await toolset.getTools({
+      actions: [
+        'GOOGLECALENDAR_QUICK_ADD',
+        'GOOGLECALENDAR_LIST_EVENTS',
+        'GOOGLECALENDAR_CREATE_EVENT',
+        'GOOGLECALENDAR_UPDATE_EVENT',
+        'GOOGLECALENDAR_DELETE_EVENT'
+      ]
+    }, entityId);
+    
+    console.log(`✅ Retrieved ${tools ? Object.keys(tools).length : 0} tools for ${userEmail}`);
+    return tools;
+  } catch (error) {
+    console.error(`❌ Error getting tools for ${userEmail}:`, error);
+    throw error;
+  }
+}
+
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'SmartPlan API Server',
+    message: 'SmartPlan API Server with Composio + OpenAI',
     status: 'running',
     clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
     endpoints: {
       health: '/api/health',
-      userConnection: '/api/user/connect-google-calendar',
-      lettaHealthCheck: '/api/letta/health-check',
-      lettaSendMessage: '/api/letta/send-message',
-      lettaGenerateSuggestions: '/api/letta/generate-suggestions',
-      composioConnect: '/api/composio/connect-google-calendar',
-      composioConnections: '/api/composio/connections',
-      composioTest: '/api/composio/test-connection',
+      setupConnection: '/api/composio/setup-connection',
+      sendMessage: '/api/ai/send-message',
+      getConnections: '/api/composio/connections',
+      testConnection: '/api/composio/test-connection',
       stats: '/api/stats'
     },
-    note: 'This is an API server. Visit the client URL above to use the application.',
+    note: 'This server uses Composio + OpenAI for user-specific Google Calendar management.',
     userConnections: userConnections.size,
-    userAgents: userAgents.size,
+    userEntities: userEntities.size,
     timestamp: new Date().toISOString()
   });
 });
@@ -49,296 +140,178 @@ app.get('/api/health', (req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     services: {
-      letta: 'available',
-      composio: 'simulated'
+      openai: process.env.OPENAI_API_KEY ? 'configured' : 'missing',
+      composio: process.env.COMPOSIO_API_KEY ? 'configured' : 'missing'
     },
     userConnections: userConnections.size,
-    userAgents: userAgents.size
+    userEntities: userEntities.size
   });
 });
 
-// User Google Account connection endpoint with user-specific agent creation
-app.post('/api/user/connect-google-calendar', async (req, res) => {
-  try {
-    const { userEmail, accessToken, refreshToken, expiresIn } = req.body;
-    
-    if (!userEmail || !accessToken) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'userEmail and accessToken are required',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    console.log(`🔗 Connecting ${userEmail}'s Google Calendar to user-specific agent`);
-    
-    // Store user-specific connection
-    const connectionId = `conn_${userEmail}_${Date.now()}`;
-    userConnections.set(userEmail, {
-      connectionId,
-      accessToken,
-      refreshToken,
-      expiresAt: Date.now() + (expiresIn || 3600) * 1000,
-      status: 'active',
-      connectedAt: new Date().toISOString()
-    });
-
-    // Create/assign user-specific agent
-    const agentId = `agent_${userEmail.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
-    userAgents.set(userEmail, {
-      agentId,
-      userEmail,
-      createdAt: new Date().toISOString(),
-      status: 'active'
-    });
-    
-    console.log(`✅ ${userEmail}'s Google Calendar connected to user-specific agent:`, { 
-      userEmail, 
-      connectionId, 
-      agentId 
-    });
-    
-    res.json({
-      success: true,
-      agentId,
-      message: `Google Calendar connected successfully for ${userEmail} with dedicated agent`,
-      userEmail,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(`❌ Failed to connect Google Calendar for user:`, error);
-    res.status(500).json({ 
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Letta endpoints with user-specific context
-app.post('/api/letta/health-check', async (req, res) => {
+// Setup Composio connection for user
+app.post('/api/composio/setup-connection', async (req, res) => {
   try {
     const { userEmail } = req.body;
-    
-    // Check user-specific connections and agents
-    const hasConnection = userEmail ? userConnections.has(userEmail) : false;
-    const userAgent = userEmail ? userAgents.get(userEmail) : null;
-    const agentId = userAgent ? userAgent.agentId : null;
-    
-    console.log(`🏥 Letta health check for user: ${userEmail || 'anonymous'}`, { 
-      hasConnection, 
-      agentId,
-      userAgent: !!userAgent
-    });
-    
-    res.json({ 
-      healthy: true,
-      agentId: agentId,
-      hasGoogleCalendar: hasConnection,
-      userEmail: userEmail || null,
-      userSpecificAgent: !!userAgent,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ Letta health check failed:', error);
-    res.status(500).json({ 
-      healthy: false, 
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-app.post('/api/letta/send-message', async (req, res) => {
-  try {
-    const { message, context } = req.body;
-    
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
-
-    const userEmail = context?.userEmail;
-    if (!userEmail) {
-      return res.status(400).json({ 
-        error: 'User email is required for personalized agent interaction',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const hasGoogleCalendar = userConnections.has(userEmail);
-    const userAgent = userAgents.get(userEmail);
-    
-    console.log(`💬 Processing message for ${userEmail}:`, { 
-      messageLength: message.length,
-      hasGoogleCalendar,
-      hasUserAgent: !!userAgent,
-      agentId: userAgent?.agentId
-    });
-
-    // Simulate intelligent AI response based on message content and user context
-    let aiResponse = '';
-    
-    if (message.toLowerCase().includes('schedule') || message.toLowerCase().includes('create')) {
-      if (hasGoogleCalendar) {
-        aiResponse = `Perfect! I can help you schedule that in your personal Google Calendar, ${userEmail}. Since your account is connected to my dedicated agent, I can create the event directly. `;
-        
-        if (message.toLowerCase().includes('meeting')) {
-          aiResponse += `I'll schedule a meeting for you. What time works best?`;
-        } else if (message.toLowerCase().includes('workout') || message.toLowerCase().includes('exercise')) {
-          aiResponse += `Great choice for staying healthy! I'll add a workout session to your personal calendar.`;
-        } else if (message.toLowerCase().includes('study') || message.toLowerCase().includes('learn')) {
-          aiResponse += `Excellent! Learning is key to growth. I'll block out study time in your calendar.`;
-        } else {
-          aiResponse += `I'll create that event in your personal calendar right away.`;
-        }
-      } else {
-        aiResponse = `I'd love to help you schedule that, ${userEmail}! To create events directly in your Google Calendar, please connect your Google Calendar first using the "Connect AI Integration" button below. Once connected, I'll have a dedicated agent just for your calendar.`;
-      }
-    } else if (message.toLowerCase().includes('today') || message.toLowerCase().includes('schedule')) {
-      aiResponse = `Let me help you with your schedule, ${userEmail}. ${hasGoogleCalendar ? `I can see your Google Calendar events and help you plan around them using your dedicated agent.` : 'Connect your Google Calendar for full schedule visibility with a personalized agent.'}`;
-    } else if (message.toLowerCase().includes('suggest') || message.toLowerCase().includes('recommend')) {
-      aiResponse = `I'd be happy to suggest some activities for you, ${userEmail}! Based on your preferences, I can recommend study sessions, workouts, breaks, or work blocks. What type of activity are you interested in?`;
-    } else if (message.toLowerCase().includes('help')) {
-      aiResponse = `I'm here to help you manage your calendar efficiently, ${userEmail}! I can:
-      
-• Create events using natural language
-• Suggest optimal times for activities  
-• Help you balance work, study, and personal time
-• Provide motivational feedback
-• Sync with your Google Calendar using your dedicated agent
-
-${hasGoogleCalendar ? `Your Google Calendar is connected with agent ${userAgent?.agentId}, so I can make changes directly!` : 'Connect your Google Calendar to get a dedicated agent for full integration.'}
-
-Try asking me to "schedule a meeting tomorrow at 2pm" or "suggest a good time for exercise"!`;
-    } else {
-      aiResponse = `I received your message: "${message}", ${userEmail}. ${hasGoogleCalendar ? `Since your Google Calendar is connected to your dedicated agent (${userAgent?.agentId}), I can help you create, update, and manage events directly.` : 'Connect your Google Calendar to enable full AI-powered calendar management with a personalized agent.'} How can I help you optimize your schedule today?`;
-    }
-    
-    res.json({
-      success: true,
-      response: {
-        message: aiResponse,
-        suggestions: [],
-        events: [],
-        action: undefined
-      },
-      userEmail,
-      agentId: userAgent?.agentId,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ Letta send message failed:', error);
-    res.status(500).json({ 
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-app.post('/api/letta/generate-suggestions', async (req, res) => {
-  try {
-    const { events, preferences, currentDate, userEmail } = req.body;
     
     if (!userEmail) {
       return res.status(400).json({
         success: false,
-        error: 'User email is required for personalized suggestions',
+        error: 'userEmail is required',
         timestamp: new Date().toISOString()
       });
     }
     
-    console.log(`💡 Generating suggestions for ${userEmail}:`, { 
-      eventsCount: events?.length || 0,
-      hasPreferences: !!preferences,
-      userAgent: userAgents.has(userEmail)
+    console.log(`🔄 Setting up Composio connection for: ${userEmail}`);
+    
+    const connection = await setupUserConnectionIfNotExists(userEmail);
+    const connectionData = userConnections.get(userEmail);
+    
+    res.json({
+      success: true,
+      userEmail,
+      entityId: connectionData?.entityId,
+      connectionId: connectionData?.connectionId,
+      redirectUrl: connectionData?.redirectUrl,
+      status: connectionData?.status,
+      message: connectionData?.status === 'pending' 
+        ? `Please complete Google Calendar authentication using the redirect URL`
+        : `Google Calendar connection is active for ${userEmail}`,
+      timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    console.error('❌ Error setting up Composio connection:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// AI Chat endpoint with Composio tools
+app.post('/api/ai/send-message', async (req, res) => {
+  try {
+    const { message, userEmail, context } = req.body;
     
-    // Generate contextual suggestions based on user data
-    const suggestions = [];
-    const hasGoogleCalendar = userConnections.has(userEmail);
-    const userAgent = userAgents.get(userEmail);
-    
-    // Suggest based on focus areas
-    if (preferences?.focusAreas) {
-      if (preferences.focusAreas.includes('health-fitness')) {
-        suggestions.push({
-          id: `suggestion_${Date.now()}_health_${userEmail}`,
-          type: 'schedule',
-          title: 'Morning Workout Session',
-          description: `Start your day with energizing exercise based on your health focus, ${userEmail}`,
-          action: 'create_event',
-          priority: 1,
-          userEmail: userEmail,
-          createdAt: new Date().toISOString()
-        });
-      }
-      
-      if (preferences.focusAreas.includes('learning-education')) {
-        suggestions.push({
-          id: `suggestion_${Date.now()}_study_${userEmail}`,
-          type: 'schedule',
-          title: 'Deep Learning Block',
-          description: `Focused study session during your productive hours, ${userEmail}`,
-          action: 'create_event',
-          priority: 1,
-          userEmail: userEmail,
-          createdAt: new Date().toISOString()
-        });
-      }
-      
-      if (preferences.focusAreas.includes('work-career')) {
-        suggestions.push({
-          id: `suggestion_${Date.now()}_work_${userEmail}`,
-          type: 'schedule',
-          title: 'Strategic Work Session',
-          description: `High-priority work block for career advancement, ${userEmail}`,
-          action: 'create_event',
-          priority: 1,
-          userEmail: userEmail,
-          createdAt: new Date().toISOString()
-        });
-      }
-    }
-    
-    // Add break suggestion if many events
-    if (events && events.length > 3) {
-      suggestions.push({
-        id: `suggestion_${Date.now()}_break_${userEmail}`,
-        type: 'break',
-        title: 'Mindful Break',
-        description: `Take a 15-minute break to recharge between activities, ${userEmail}`,
-        action: 'schedule_break',
-        priority: 2,
-        userEmail: userEmail,
-        createdAt: new Date().toISOString()
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message is required',
+        timestamp: new Date().toISOString()
       });
     }
     
-    // Add optimization suggestion
-    suggestions.push({
-      id: `suggestion_${Date.now()}_optimize_${userEmail}`,
-      type: 'optimize',
-      title: 'Schedule Optimization',
-      description: hasGoogleCalendar ? 
-        `Your Google Calendar is connected with dedicated agent ${userAgent?.agentId} - I can optimize your schedule automatically!` :
-        `Connect Google Calendar to enable automatic schedule optimization with a personalized agent, ${userEmail}`,
-      action: 'optimize_schedule',
-      priority: hasGoogleCalendar ? 1 : 3,
-      userEmail: userEmail,
-      createdAt: new Date().toISOString()
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'User email is required for personalized calendar management',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`💬 Processing AI message for ${userEmail}: "${message}"`);
+    
+    // Check if user has Composio connection
+    const connectionData = userConnections.get(userEmail);
+    if (!connectionData) {
+      return res.json({
+        success: true,
+        response: {
+          message: `Hi ${userEmail}! To manage your Google Calendar with AI, I need to connect to your account first. Please use the "Setup Connection" button to authenticate with Google Calendar through Composio.`,
+          needsConnection: true
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (connectionData.status === 'pending') {
+      return res.json({
+        success: true,
+        response: {
+          message: `Hi ${userEmail}! Your Google Calendar connection is pending. Please complete the authentication process using this link: ${connectionData.redirectUrl}`,
+          needsConnection: true,
+          redirectUrl: connectionData.redirectUrl
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get user-specific tools
+    const tools = await getUserTools(userEmail);
+    
+    // Build context for the AI
+    const contextInfo = [];
+    if (context?.currentDate) {
+      contextInfo.push(`Current date: ${context.currentDate}`);
+    }
+    if (context?.events && context.events.length > 0) {
+      const todayEvents = context.events.filter(e => 
+        e.date === context.currentDate?.split('T')[0]
+      );
+      if (todayEvents.length > 0) {
+        contextInfo.push(`Today's events: ${todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ')}`);
+      }
+    }
+    if (context?.preferences?.focusAreas) {
+      contextInfo.push(`User's focus areas: ${context.preferences.focusAreas.join(', ')}`);
+    }
+    
+    const systemContext = contextInfo.length > 0 ? contextInfo.join('\n') : '';
+    
+    // Create enhanced prompt for calendar management
+    const enhancedPrompt = `You are a personal AI calendar assistant for ${userEmail}. 
+    
+${systemContext ? `Context:\n${systemContext}\n\n` : ''}
+
+User request: "${message}"
+
+You have access to Google Calendar tools to help manage ${userEmail}'s calendar. You can:
+- Create calendar events
+- List existing events  
+- Update events
+- Delete events
+- Quick add events using natural language
+
+Please help ${userEmail} with their calendar request. If they want to schedule something, use the appropriate calendar tools. Always be helpful and confirm what actions you're taking.`;
+    
+    console.log(`🤖 Sending request to OpenAI for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
+    
+    // Generate response using OpenAI with Composio tools
+    const output = await generateText({
+      model: openai("gpt-4o"),
+      tools: tools,
+      prompt: enhancedPrompt,
+      maxToolRoundtrips: 5,
     });
+    
+    // Generate a user-friendly summary
+    const finalOutput = await generateText({
+      model: openai("gpt-4o"),
+      prompt: `Based on these calendar operations for ${userEmail}:
+      
+Tool calls: ${JSON.stringify(output.toolCalls)}
+Results: ${JSON.stringify(output.toolResults)}
+
+Provide a friendly, conversational summary of what was accomplished for ${userEmail}. If calendar events were created, updated, or managed, mention the specific details. If there were any issues, explain them clearly. Keep the tone helpful and personal.`,
+      maxToolRoundtrips: 1,
+    });
+    
+    console.log(`✅ Generated AI response for ${userEmail}`);
     
     res.json({
       success: true,
-      suggestions: suggestions.slice(0, 4), // Limit to 4 suggestions
-      userEmail,
-      agentId: userAgent?.agentId,
+      response: {
+        message: finalOutput.text,
+        toolCalls: output.toolCalls,
+        toolResults: output.toolResults,
+        userEmail: userEmail
+      },
       timestamp: new Date().toISOString()
     });
+    
   } catch (error) {
-    console.error('❌ Letta generate suggestions failed:', error);
-    res.status(500).json({ 
+    console.error('❌ Error processing AI message:', error);
+    res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
@@ -346,42 +319,16 @@ app.post('/api/letta/generate-suggestions', async (req, res) => {
   }
 });
 
-// Composio endpoints (simulated)
-app.post('/api/composio/connect-google-calendar', async (req, res) => {
-  try {
-    console.log('🔄 Simulating Google Calendar connection via Composio...');
-    
-    const connectionId = `composio_conn_${Date.now()}`;
-    const redirectUrl = `https://accounts.google.com/oauth/authorize?client_id=example&redirect_uri=http://localhost:3001/callback&response_type=code&scope=https://www.googleapis.com/auth/calendar`;
-    
-    console.log('✅ Simulated Google Calendar connection initiated');
-    console.log(`🔗 Redirect URL: ${redirectUrl}`);
-    
-    res.json({
-      success: true,
-      redirectUrl: redirectUrl,
-      connectionId: connectionId,
-      message: 'Google Calendar connection initiated (simulated). Use the redirect URL to authenticate.',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ Composio Google Calendar connection failed:', error);
-    res.status(500).json({ 
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
+// Get user connections
 app.get('/api/composio/connections', async (req, res) => {
   try {
     const connections = Array.from(userConnections.entries()).map(([userEmail, conn]) => ({
-      id: conn.connectionId,
       userEmail: userEmail,
+      entityId: conn.entityId,
+      connectionId: conn.connectionId,
       status: conn.status,
-      expiresAt: new Date(conn.expiresAt).toISOString(),
-      connectedAt: conn.connectedAt
+      connectedAt: conn.connectedAt || conn.createdAt,
+      redirectUrl: conn.redirectUrl
     }));
     
     res.json({
@@ -391,8 +338,8 @@ app.get('/api/composio/connections', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('❌ Failed to get Composio connections:', error);
-    res.status(500).json({ 
+    console.error('❌ Failed to get connections:', error);
+    res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
@@ -400,37 +347,75 @@ app.get('/api/composio/connections', async (req, res) => {
   }
 });
 
+// Test connection for user
 app.post('/api/composio/test-connection', async (req, res) => {
   try {
-    const testResult = {
-      status: 'success',
-      message: 'Server integration is working perfectly with user-specific agents',
-      userConnections: userConnections.size,
-      userAgents: userAgents.size,
-      features: {
-        userGoogleCalendarConnection: 'active',
-        lettaSimulation: 'active',
-        composioSimulation: 'active',
-        aiResponses: 'contextual',
-        userSpecificAgents: 'enabled'
-      },
-      userAgentDetails: Array.from(userAgents.entries()).map(([email, agent]) => ({
-        userEmail: email,
-        agentId: agent.agentId,
-        status: agent.status,
-        createdAt: agent.createdAt
-      })),
-      timestamp: new Date().toISOString()
-    };
+    const { userEmail } = req.body;
     
-    res.json({
-      success: true,
-      testResult,
-      timestamp: new Date().toISOString()
-    });
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail is required for connection test',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`🧪 Testing connection for user: ${userEmail}`);
+    
+    const connectionData = userConnections.get(userEmail);
+    const entityId = userEntities.get(userEmail);
+    
+    if (!connectionData || !entityId) {
+      return res.json({
+        success: false,
+        error: `No connection found for user: ${userEmail}`,
+        userEmail,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Try to get tools to test the connection
+    try {
+      const tools = await getUserTools(userEmail);
+      
+      const testResult = {
+        status: 'success',
+        message: `Connection test successful for ${userEmail}`,
+        userEmail: userEmail,
+        entityId: entityId,
+        connectionId: connectionData.connectionId,
+        connectionStatus: connectionData.status,
+        toolsAvailable: tools ? Object.keys(tools).length : 0,
+        features: {
+          googleCalendarIntegration: 'active',
+          composioTools: 'available',
+          openaiIntegration: 'active',
+          userSpecificEntity: 'enabled'
+        },
+        timestamp: new Date().toISOString()
+      };
+      
+      res.json({
+        success: true,
+        testResult,
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (toolError) {
+      console.error(`❌ Tool test failed for ${userEmail}:`, toolError);
+      
+      res.json({
+        success: false,
+        error: `Tool access failed for ${userEmail}: ${toolError.message}`,
+        userEmail,
+        connectionData,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
   } catch (error) {
-    console.error('❌ Composio connection test failed:', error);
-    res.status(500).json({ 
+    console.error('❌ Connection test failed:', error);
+    res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
@@ -438,23 +423,27 @@ app.post('/api/composio/test-connection', async (req, res) => {
   }
 });
 
-// Service statistics endpoint with user-specific data
+// Service statistics
 app.get('/api/stats', async (req, res) => {
   try {
     const stats = {
       userConnections: userConnections.size,
-      userAgents: userAgents.size,
+      userEntities: userEntities.size,
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       nodeVersion: process.version,
       platform: process.platform,
+      services: {
+        openai: process.env.OPENAI_API_KEY ? 'configured' : 'missing',
+        composio: process.env.COMPOSIO_API_KEY ? 'configured' : 'missing'
+      },
       userDetails: {
         connectedUsers: Array.from(userConnections.keys()),
-        agentUsers: Array.from(userAgents.keys()),
-        userAgentMapping: Array.from(userAgents.entries()).map(([email, agent]) => ({
+        entityUsers: Array.from(userEntities.keys()),
+        userEntityMapping: Array.from(userEntities.entries()).map(([email, entityId]) => ({
           userEmail: email,
-          agentId: agent.agentId,
-          status: agent.status
+          entityId: entityId,
+          connectionStatus: userConnections.get(email)?.status || 'unknown'
         }))
       },
       timestamp: new Date().toISOString()
@@ -467,7 +456,7 @@ app.get('/api/stats', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Failed to get service stats:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
@@ -493,51 +482,49 @@ app.use('*', (req, res) => {
     availableEndpoints: [
       'GET /',
       'GET /api/health',
-      'POST /api/user/connect-google-calendar',
-      'POST /api/letta/health-check',
-      'POST /api/letta/send-message',
-      'POST /api/letta/generate-suggestions',
-      'POST /api/composio/connect-google-calendar',
+      'POST /api/composio/setup-connection',
+      'POST /api/ai/send-message',
       'GET /api/composio/connections',
       'POST /api/composio/test-connection',
       'GET /api/stats'
     ],
-    note: 'This is an API server. Visit http://localhost:5173 for the client application.',
+    note: 'This is an API server with Composio + OpenAI integration. Visit http://localhost:5173 for the client application.',
     userConnections: userConnections.size,
-    userAgents: userAgents.size,
+    userEntities: userEntities.size,
     timestamp: new Date().toISOString()
   });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log('🚀 Server started successfully!');
+  console.log('🚀 SmartPlan Server with Composio + OpenAI started successfully!');
   console.log(`📡 Server running on port ${PORT}`);
   console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔗 CORS enabled for: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
   console.log('');
+  console.log('🔧 Configuration:');
+  console.log(`  - OpenAI API Key: ${process.env.OPENAI_API_KEY ? '✅ Configured' : '❌ Missing'}`);
+  console.log(`  - Composio API Key: ${process.env.COMPOSIO_API_KEY ? '✅ Configured' : '❌ Missing'}`);
+  console.log('');
   console.log('📋 Available endpoints:');
   console.log('  GET  /');
   console.log('  GET  /api/health');
-  console.log('  POST /api/user/connect-google-calendar');
-  console.log('  POST /api/letta/health-check');
-  console.log('  POST /api/letta/send-message');
-  console.log('  POST /api/letta/generate-suggestions');
-  console.log('  POST /api/composio/connect-google-calendar');
+  console.log('  POST /api/composio/setup-connection');
+  console.log('  POST /api/ai/send-message');
   console.log('  GET  /api/composio/connections');
   console.log('  POST /api/composio/test-connection');
   console.log('  GET  /api/stats');
   console.log('');
   console.log('✅ Server is ready to handle requests!');
-  console.log('💡 The server provides intelligent AI responses with user-specific Google Calendar integration.');
-  console.log('🤖 Each user gets their own dedicated Letta agent for personalized calendar management.');
-  console.log('🔧 All TypeScript dependencies removed - running pure JavaScript for maximum compatibility.');
+  console.log('🤖 Each authenticated user gets their own Composio entity and Google Calendar connection.');
+  console.log('🔐 User-specific calendar management with complete data isolation.');
+  console.log('🎯 OpenAI + Composio integration for intelligent calendar operations.');
   console.log('');
   console.log('🎯 To use the application:');
   console.log('   👉 Visit: http://localhost:5173');
   console.log('   📱 This server (port 3001) is the API backend');
   console.log('   🖥️  The client app (port 5173) is the user interface');
-  console.log('   👤 Each authenticated user gets their own Letta agent');
+  console.log('   👤 Each authenticated user gets their own Composio entity');
 });
 
 export default app;

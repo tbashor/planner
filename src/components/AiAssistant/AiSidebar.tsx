@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import GoogleCalendarAuth from '../GoogleCalendar/GoogleCalendarAuth';
-import lettaService from '../../services/lettaService';
+import composioService from '../../services/composioService';
 
 // Extend Window interface for webkit speech recognition
 declare global {
@@ -25,74 +25,127 @@ export default function AiSidebar() {
   const [isListening, setIsListening] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingMessage, setIsProcessingMessage] = useState(false);
-  const [isLettaConnected, setIsLettaConnected] = useState(false);
-  const [lettaConnectionError, setLettaConnectionError] = useState<string | null>(null);
-  const [currentUserAgent, setCurrentUserAgent] = useState<string | null>(null);
+  const [isComposioConnected, setIsComposioConnected] = useState(false);
+  const [composioConnectionError, setComposioConnectionError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string>('unknown');
+  const [showComposioSettings, setShowComposioSettings] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [testResults, setTestResults] = useState<any>(null);
+  const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
 
   // Get the ACTUAL authenticated user email from the app state
   const getAuthenticatedUserEmail = (): string | null => {
-    // First check if we have a user in state with email
     if (state.user?.email) {
-      console.log('🔍 Found user email in state:', state.user.email);
+      console.log('🔍 Found authenticated user email:', state.user.email);
       return state.user.email;
-    }
-
-    // Check if we have Google Calendar tokens which might contain user info
-    try {
-      const tokens = localStorage.getItem('oauth_tokens');
-      if (tokens) {
-        const tokenData = JSON.parse(tokens);
-        console.log('🔍 Found OAuth tokens, but no user email in tokens');
-      }
-    } catch (error) {
-      console.warn('Could not parse OAuth tokens:', error);
     }
 
     console.warn('⚠️ No authenticated user email found');
     return null;
   };
 
-  // Check Letta agent connection on component mount and when user changes
+  // Check server availability and Composio connection
   useEffect(() => {
-    checkLettaConnection();
+    checkServerAndConnection();
   }, [state.user?.email]);
 
-  const checkLettaConnection = async () => {
+  const checkServerAndConnection = async () => {
     try {
-      // Get the REAL authenticated user email
-      const userEmail = getAuthenticatedUserEmail();
-      
-      if (!userEmail) {
-        setIsLettaConnected(false);
-        setLettaConnectionError('Please complete onboarding to get your personal AI agent');
-        setCurrentUserAgent(null);
+      // Check server availability
+      const available = await composioService.isServerAvailable();
+      setServerAvailable(available);
+
+      if (!available) {
+        setIsComposioConnected(false);
+        setComposioConnectionError('Composio server is not available. Please start the server.');
         return;
       }
 
-      console.log(`🔍 Checking Letta connection for AUTHENTICATED user: ${userEmail}`);
-      const isHealthy = await lettaService.healthCheck(userEmail);
-      setIsLettaConnected(isHealthy);
+      // Get authenticated user email
+      const userEmail = getAuthenticatedUserEmail();
+      if (!userEmail) {
+        setIsComposioConnected(false);
+        setComposioConnectionError('Please complete onboarding to get your personal AI assistant');
+        setConnectionStatus('no_user');
+        return;
+      }
+
+      console.log(`🔍 Checking Composio connection for user: ${userEmail}`);
+
+      // Test user's Composio connection
+      const testResult = await composioService.testUserConnection(userEmail);
       
-      if (isHealthy) {
-        // Get the user-specific agent ID
-        const agentId = lettaService.getCurrentAgentId(userEmail);
-        setCurrentUserAgent(agentId);
-        setLettaConnectionError(null);
-        console.log(`✅ Connected to user-specific agent for ${userEmail}:`, agentId);
+      if (testResult.success && testResult.testResult) {
+        setIsComposioConnected(true);
+        setConnectionStatus(testResult.testResult.connectionStatus);
+        setComposioConnectionError(null);
+        console.log(`✅ Composio connection active for ${userEmail}`);
       } else {
-        // Get the specific error message from the Letta service
-        const lastError = lettaService.getLastError();
-        setLettaConnectionError(lastError || 'Unable to connect to your personal Letta agent');
-        setCurrentUserAgent(null);
-        console.warn(`❌ Failed to connect to agent for ${userEmail}`);
+        setIsComposioConnected(false);
+        setConnectionStatus('disconnected');
+        setComposioConnectionError(testResult.error || 'Composio connection not found');
+        console.warn(`❌ Composio connection failed for ${userEmail}`);
       }
     } catch (error) {
-      setIsLettaConnected(false);
-      setCurrentUserAgent(null);
-      // Get the specific error message from the Letta service
-      const lastError = lettaService.getLastError();
-      setLettaConnectionError(lastError || 'Personal Letta agent connection failed');
-      console.error(`❌ Error checking Letta connection:`, error);
+      setIsComposioConnected(false);
+      setServerAvailable(false);
+      setConnectionStatus('error');
+      setComposioConnectionError('Failed to check Composio connection');
+      console.error('❌ Error checking Composio connection:', error);
+    }
+  };
+
+  const handleSetupConnection = async () => {
+    const userEmail = getAuthenticatedUserEmail();
+    if (!userEmail) {
+      setComposioConnectionError('Please complete onboarding first');
+      return;
+    }
+
+    try {
+      console.log(`🔗 Setting up Composio connection for ${userEmail}`);
+      setComposioConnectionError(null);
+
+      const result = await composioService.setupUserConnection(userEmail);
+      
+      if (result.success) {
+        if (result.redirectUrl) {
+          // User needs to authenticate with Google Calendar
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `🔗 Great! I've set up your personal Composio entity. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
+
+Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands!`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+
+          // Open the redirect URL
+          window.open(result.redirectUrl, '_blank');
+        } else {
+          // Connection already exists
+          setIsComposioConnected(true);
+          setConnectionStatus(result.status || 'active');
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `🎉 Perfect! Your Composio connection is already active. I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      } else {
+        setComposioConnectionError(result.error || 'Failed to setup Composio connection');
+      }
+    } catch (error) {
+      console.error('❌ Error setting up Composio connection:', error);
+      setComposioConnectionError('Failed to setup Composio connection');
     }
   };
 
@@ -101,7 +154,6 @@ export default function AiSidebar() {
     if (!chatInput.trim()) return;
 
     const userMessage = chatInput.trim();
-    // Get the REAL authenticated user email
     const userEmail = getAuthenticatedUserEmail();
 
     if (!userEmail) {
@@ -119,7 +171,7 @@ export default function AiSidebar() {
 
     setIsProcessingMessage(true);
 
-    // Add user message with unique ID
+    // Add user message
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
@@ -133,58 +185,70 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      console.log(`💬 Sending message to user-specific agent for AUTHENTICATED user: ${userEmail}`);
+      console.log(`💬 Sending message to Composio AI for user: ${userEmail}`);
       
-      // Send message to user-specific Letta agent with CORRECT email
-      const lettaResponse = await lettaService.sendMessage(userMessage, {
+      // Send message to Composio + OpenAI service
+      const response = await composioService.sendMessage(userMessage, userEmail, {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
-        userEmail: userEmail, // Use the REAL authenticated email
       });
 
-      // If Letta returned a parsed event, add it to the calendar
-      if (lettaResponse.events && lettaResponse.events.length > 0) {
-        lettaResponse.events.forEach(event => {
-          dispatch({ type: 'ADD_EVENT', payload: event });
-        });
+      if (response.success && response.response) {
+        // Check if user needs to setup connection
+        if (response.response.needsConnection) {
+          if (response.response.redirectUrl) {
+            // Add message with redirect URL
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: `ai_redirect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                type: 'ai',
+                content: `${response.response.message}\n\nClick here to authenticate: ${response.response.redirectUrl}`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          } else {
+            // Add message suggesting connection setup
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: `ai_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                type: 'ai',
+                content: response.response.message,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          // Normal AI response
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: response.response.message,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      } else {
+        throw new Error(response.error || 'Failed to get AI response');
       }
 
-      // If Letta returned suggestions, add them
-      if (lettaResponse.suggestions && lettaResponse.suggestions.length > 0) {
-        lettaResponse.suggestions.forEach(suggestion => {
-          dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
-        });
-      }
-
-      // Add assistant response with unique ID
-      setTimeout(() => {
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'ai',
-            content: lettaResponse.message,
-            timestamp: new Date().toISOString(),
-          },
-        });
-        setIsProcessingMessage(false);
-      }, 500);
-
+      setIsProcessingMessage(false);
     } catch (error) {
-      console.error(`Error processing message with user-specific Letta agent for ${userEmail}:`, error);
-      setTimeout(() => {
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'ai',
-            content: "I'm having trouble processing that request with your personal agent right now. Please try again or check your connection to the AI assistant.",
-            timestamp: new Date().toISOString(),
-          },
-        });
-        setIsProcessingMessage(false);
-      }, 500);
+      console.error(`Error processing message for ${userEmail}:`, error);
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: "I'm having trouble processing that request right now. Please check your Composio connection and try again.",
+          timestamp: new Date().toISOString(),
+        },
+      });
+      setIsProcessingMessage(false);
     }
   };
 
@@ -213,74 +277,59 @@ export default function AiSidebar() {
     }
   };
 
-  const handleGenerateNewIdeas = async () => {
-    if (!state.user?.preferences) return;
-
-    // Get the REAL authenticated user email
+  const handleTestConnection = async () => {
     const userEmail = getAuthenticatedUserEmail();
     if (!userEmail) {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: 'Please complete onboarding first to get personalized suggestions.',
-          timestamp: new Date().toISOString(),
-        },
-      });
+      setComposioConnectionError('Please complete onboarding first');
       return;
     }
 
-    setIsGenerating(true);
-
-    // Clear existing suggestions
-    state.aiSuggestions.forEach(suggestion => {
-      dispatch({ type: 'REMOVE_AI_SUGGESTION', payload: suggestion.id });
-    });
+    setIsTestingConnection(true);
+    setTestResults(null);
 
     try {
-      console.log(`💡 Generating suggestions for AUTHENTICATED user: ${userEmail}`);
+      console.log(`🧪 Testing Composio connection for ${userEmail}`);
       
-      // Generate new suggestions using user-specific Letta agent with CORRECT email
-      const newSuggestions = await lettaService.generateSuggestions(
-        state.events,
-        state.user!.preferences,
-        new Date(),
-        userEmail // Use the REAL authenticated email
-      );
-
-      newSuggestions.forEach(suggestion => {
-        dispatch({ type: 'ADD_AI_SUGGESTION', payload: suggestion });
-      });
-
-      // Add AI message about new suggestions with unique ID
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `ai_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: `✨ I've generated ${newSuggestions.length} new personalized suggestions using your dedicated agent! These are tailored to your focus areas: ${state.user!.preferences.focusAreas?.join(', ') || 'your goals'}. Check them out below!`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      setIsGenerating(false);
+      const result = await composioService.testUserConnection(userEmail);
+      setTestResults(result);
+      
+      if (result.success) {
+        setIsComposioConnected(true);
+        setConnectionStatus(result.testResult?.connectionStatus || 'active');
+        setComposioConnectionError(null);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `test_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `🧪 Connection test successful! Your Composio integration is working perfectly. I have access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools for managing your calendar.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } else {
+        setIsComposioConnected(false);
+        setComposioConnectionError(result.error || 'Connection test failed');
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `❌ Connection test failed: ${result.error}. Please setup your Composio connection first.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
     } catch (error) {
-      console.error(`Error generating suggestions for ${userEmail}:`, error);
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `ai_error_suggestions_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: "I had trouble generating new suggestions with your personal agent. Please try again later.",
-          timestamp: new Date().toISOString(),
-        },
-      });
-      setIsGenerating(false);
+      console.error('❌ Connection test error:', error);
+      setComposioConnectionError('Connection test failed');
+      setTestResults({ success: false, error: error.message });
+    } finally {
+      setIsTestingConnection(false);
     }
   };
 
-  // Get the real authenticated user email for display
   const displayUserEmail = getAuthenticatedUserEmail();
 
   return (
@@ -295,17 +344,17 @@ export default function AiSidebar() {
       }`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+            <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-600 rounded-full flex items-center justify-center">
               <MessageCircle className="h-4 w-4 text-white" />
             </div>
             <h2 className={`font-semibold ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Personal AI Agent
+              AI Calendar Assistant
             </h2>
           </div>
           <div className="flex items-center space-x-1">
-            {isLettaConnected ? (
+            {isComposioConnected ? (
               <>
                 <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
                 <span className={`text-xs ${
@@ -327,33 +376,21 @@ export default function AiSidebar() {
           </div>
         </div>
         
-        {/* User-Specific Agent Info - Show REAL authenticated email */}
+        {/* User Info */}
         {displayUserEmail && (
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <div className="font-medium text-green-600">Authenticated User: {displayUserEmail}</div>
-            {currentUserAgent && (
-              <div>Agent: {currentUserAgent}</div>
+            <div className="font-medium text-green-600">User: {displayUserEmail}</div>
+            <div>Status: {connectionStatus}</div>
+            {isComposioConnected && (
+              <div className="text-green-500 mt-1">✓ Composio + OpenAI integration active</div>
             )}
-            {isLettaConnected && (
-              <div className="text-green-500 mt-1">✓ Personal agent active for {displayUserEmail}</div>
-            )}
-          </div>
-        )}
-        
-        {/* Show warning if no authenticated user */}
-        {!displayUserEmail && (
-          <div className={`mt-2 text-xs ${
-            state.isDarkMode ? 'text-red-400' : 'text-red-600'
-          }`}>
-            <div>⚠️ No authenticated user detected</div>
-            <div>Please complete onboarding and Google Calendar authentication</div>
           </div>
         )}
         
         {/* Connection Error */}
-        {lettaConnectionError && (
+        {composioConnectionError && (
           <div className={`mt-3 p-3 rounded-md text-sm max-h-32 overflow-y-auto ${
             state.isDarkMode 
               ? 'bg-red-900/30 text-red-300 border border-red-800' 
@@ -362,9 +399,9 @@ export default function AiSidebar() {
             <div className="flex items-start space-x-2">
               <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <div className="whitespace-pre-wrap break-words">{lettaConnectionError}</div>
+                <div className="whitespace-pre-wrap break-words">{composioConnectionError}</div>
                 <button 
-                  onClick={checkLettaConnection}
+                  onClick={checkServerAndConnection}
                   className={`mt-2 text-xs underline hover:no-underline ${
                     state.isDarkMode ? 'text-red-400' : 'text-red-600'
                   }`}
@@ -377,15 +414,15 @@ export default function AiSidebar() {
         )}
       </div>
 
-      {/* Chat Messages - Constrained height with forced scroll */}
+      {/* Chat Messages */}
       <div className="flex-1 flex flex-col min-h-0">
         <div 
           className={`flex-1 overflow-y-auto p-4 space-y-4 ${
             state.isDarkMode ? 'scrollbar-dark' : 'scrollbar-light'
           }`}
           style={{ 
-            maxHeight: 'calc(100vh - 400px)', // Force a maximum height
-            minHeight: '200px' // Ensure minimum height
+            maxHeight: 'calc(100vh - 500px)',
+            minHeight: '200px'
           }}
         >
           {state.chatMessages.length === 0 && (
@@ -393,12 +430,12 @@ export default function AiSidebar() {
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Start a conversation with your personal AI agent</p>
-              <p className="text-xs mt-1">Try: "Schedule a workout tomorrow at 7am" or "What's my schedule today?"</p>
-              {displayUserEmail && currentUserAgent && (
+              <p className="text-sm">Start a conversation with your AI calendar assistant</p>
+              <p className="text-xs mt-1">Powered by Composio + OpenAI for direct Google Calendar management</p>
+              {displayUserEmail && (
                 <div className="text-xs mt-2 opacity-75">
-                  <p>Your personal agent: {currentUserAgent}</p>
-                  <p>Connected to: {displayUserEmail}</p>
+                  <p>Connected as: {displayUserEmail}</p>
+                  <p>Status: {connectionStatus}</p>
                 </div>
               )}
             </div>
@@ -406,7 +443,7 @@ export default function AiSidebar() {
           
           {state.chatMessages.map((message, index) => (
             <div
-              key={`${message.id}_${index}`} // Use both ID and index to ensure uniqueness
+              key={`${message.id}_${index}`}
               className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
@@ -436,18 +473,18 @@ export default function AiSidebar() {
               }`}>
                 <div className="flex items-center space-x-2">
                   <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">Your personal agent is thinking...</span>
+                  <span className="text-xs opacity-70">AI is processing your calendar request...</span>
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Chat Input - Fixed at bottom */}
+        {/* Chat Input */}
         <div className={`p-4 border-t flex-shrink-0 ${
           state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
         }`}>
@@ -458,37 +495,37 @@ export default function AiSidebar() {
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={
                 !displayUserEmail 
-                  ? "Complete onboarding to get your personal agent..."
-                  : isLettaConnected 
-                    ? "Ask your personal agent to manage your calendar..." 
-                    : "Personal agent is offline"
+                  ? "Complete onboarding to get your AI assistant..."
+                  : !serverAvailable
+                    ? "Server is offline..."
+                    : "Ask me to manage your Google Calendar..."
               }
-              disabled={isProcessingMessage || !isLettaConnected || !displayUserEmail}
+              disabled={isProcessingMessage || !displayUserEmail || !serverAvailable}
               className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 state.isDarkMode
                   ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                   : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-              } ${(isProcessingMessage || !isLettaConnected || !displayUserEmail) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isProcessingMessage || !displayUserEmail || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
             />
             {state.user?.preferences.voiceInput && (
               <button
                 type="button"
                 onClick={handleVoiceInput}
-                disabled={isProcessingMessage || !isLettaConnected || !displayUserEmail}
+                disabled={isProcessingMessage || !displayUserEmail || !serverAvailable}
                 className={`p-2 rounded-lg transition-colors duration-200 ${
                   isListening
                     ? 'bg-red-500 text-white'
                     : state.isDarkMode
                     ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                } ${(isProcessingMessage || !isLettaConnected || !displayUserEmail) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${(isProcessingMessage || !displayUserEmail || !serverAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Mic className="h-4 w-4" />
               </button>
             )}
             <button
               type="submit"
-              disabled={!chatInput.trim() || isProcessingMessage || !isLettaConnected || !displayUserEmail}
+              disabled={!chatInput.trim() || isProcessingMessage || !displayUserEmail || !serverAvailable}
               className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
             >
               <Send className="h-4 w-4" />
@@ -500,73 +537,119 @@ export default function AiSidebar() {
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
             {!displayUserEmail ? (
-              <p>🔐 Complete onboarding to get your personal AI agent</p>
-            ) : isLettaConnected ? (
-              <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's my schedule?", "Suggest productive tasks"</p>
+              <p>🔐 Complete onboarding to get your AI assistant</p>
+            ) : !serverAvailable ? (
+              <p>🔌 Server is offline - please start the server</p>
             ) : (
-              <p>🔌 Connect to your personal Letta agent to start managing your calendar with AI</p>
+              <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's on my calendar?", "Create a workout session"</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* AI Suggestions - Fixed at bottom */}
+      {/* Composio Settings */}
       <div className={`border-t p-4 flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <Lightbulb className={`h-4 w-4 ${
-              state.isDarkMode ? 'text-yellow-400' : 'text-yellow-500'
+            <Link className={`h-4 w-4 ${
+              state.isDarkMode ? 'text-green-400' : 'text-green-500'
             }`} />
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Personal Suggestions
+              Composio Integration
             </h3>
           </div>
           <button
-            onClick={handleGenerateNewIdeas}
-            disabled={isGenerating || !state.user?.preferences || !isLettaConnected || !displayUserEmail}
-            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              (isGenerating || !isLettaConnected || !displayUserEmail)
-                ? 'opacity-50 cursor-not-allowed'
-                : state.isDarkMode
-                ? 'bg-purple-600 text-white hover:bg-purple-700'
-                : 'bg-purple-500 text-white hover:bg-purple-600'
+            onClick={() => setShowComposioSettings(!showComposioSettings)}
+            className={`p-1 rounded transition-colors ${
+              state.isDarkMode
+                ? 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
             }`}
           >
-            <Sparkles className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
-            <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+            <Settings className="h-3 w-3" />
           </button>
         </div>
 
-        <div className="space-y-2 max-h-48 overflow-y-auto">
-          {state.aiSuggestions.length === 0 ? (
-            <div className={`text-center py-4 ${
-              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-            }`}>
-              <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              {!displayUserEmail ? (
-                <p className="text-xs">Complete onboarding to get personal suggestions</p>
-              ) : isLettaConnected ? (
-                <p className="text-xs">Click "Generate" for personalized suggestions from your agent</p>
-              ) : (
-                <p className="text-xs">Connect to your personal agent to get AI suggestions</p>
-              )}
-            </div>
-          ) : (
-            state.aiSuggestions.slice(0, 3).map((suggestion, index) => (
-              <AiSuggestionCard 
-                key={`${suggestion.id}_${index}`} // Use both ID and index to ensure uniqueness
-                suggestion={suggestion} 
-              />
-            ))
-          )}
+        {showComposioSettings && (
+          <div className="space-y-3 mb-3">
+            {/* Setup Connection Button */}
+            {displayUserEmail && !isComposioConnected && (
+              <button
+                onClick={handleSetupConnection}
+                disabled={!serverAvailable}
+                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                  !serverAvailable
+                    ? 'opacity-50 cursor-not-allowed'
+                    : state.isDarkMode
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-green-500 text-white hover:bg-green-600'
+                }`}
+              >
+                <Link className="h-3 w-3" />
+                <span>Setup Composio Connection</span>
+              </button>
+            )}
+
+            {/* Test Connection Button */}
+            {displayUserEmail && (
+              <button
+                onClick={handleTestConnection}
+                disabled={isTestingConnection || !serverAvailable}
+                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                  isTestingConnection || !serverAvailable
+                    ? 'opacity-50 cursor-not-allowed'
+                    : state.isDarkMode
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'bg-purple-500 text-white hover:bg-purple-600'
+                }`}
+              >
+                <TestTube className={`h-3 w-3 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                <span>{isTestingConnection ? 'Testing...' : 'Test Connection'}</span>
+              </button>
+            )}
+
+            {/* Test Results */}
+            {testResults && (
+              <div className={`p-3 rounded-lg text-xs ${
+                state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-gray-100 border border-gray-300'
+              }`}>
+                <div className="font-medium mb-2">Test Results:</div>
+                <pre className={`text-xs overflow-auto max-h-32 ${
+                  state.isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  {JSON.stringify(testResults, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Connection Status */}
+        <div className={`text-xs p-2 rounded-lg ${
+          isComposioConnected
+            ? state.isDarkMode ? 'bg-green-900 bg-opacity-20 text-green-400' : 'bg-green-50 text-green-600'
+            : state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
+        }`}>
+          <div className="flex items-center space-x-1 mb-1">
+            <Link className="h-3 w-3" />
+            <span className="font-medium">
+              {isComposioConnected ? 'Composio Connected' : 'Setup Required'}
+            </span>
+          </div>
+          <p>
+            {isComposioConnected 
+              ? `Your Google Calendar is connected via Composio. I can create, update, and manage events using AI commands.`
+              : `Connect your Google Calendar through Composio to enable AI-powered calendar management.`
+            }
+          </p>
         </div>
       </div>
 
-      {/* Google Calendar Integration - Fixed at bottom */}
+      {/* Google Calendar Integration */}
       <GoogleCalendarAuth />
     </div>
   );
