@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { oauthService } from '../../services/oauthService';
+import { googleCalendarService } from '../../services/googleCalendarService';
 import { useApp } from '../../contexts/AppContext';
 
 interface CallbackState {
@@ -49,9 +50,25 @@ export default function OAuthCallback() {
       const tokens = await oauthService.exchangeCodeForTokens(code, stateParam);
 
       setCallbackState({
+        status: 'processing',
+        message: 'Setting up AI integration...',
+      });
+
+      // Connect to server integration if user email is available
+      if (state.user?.email) {
+        try {
+          await googleCalendarService.connectToServerIntegration(state.user.email);
+          console.log('✅ Connected to server integration');
+        } catch (error) {
+          console.warn('⚠️ Failed to connect to server integration:', error);
+          // Don't fail the entire flow if server integration fails
+        }
+      }
+
+      setCallbackState({
         status: 'success',
         message: 'Authentication successful!',
-        details: 'You can now access your Google Calendar. Redirecting...',
+        details: 'Google Calendar is now connected with AI integration. Redirecting...',
       });
 
       // Add success message to chat
@@ -60,7 +77,7 @@ export default function OAuthCallback() {
         payload: {
           id: Date.now().toString(),
           type: 'ai',
-          content: '🎉 Perfect! Google Calendar is now connected with full editing permissions. Your calendar events will sync automatically and you can drag, edit, and delete events directly in the calendar.',
+          content: '🎉 Perfect! Google Calendar is now connected with full editing permissions and AI integration. Your calendar events will sync automatically and I can now directly create, update, and manage events in your Google Calendar using natural language commands!',
           timestamp: new Date().toISOString(),
         },
       });
@@ -182,6 +199,7 @@ export default function OAuthCallback() {
             <p className="font-medium mb-2">Debug Info:</p>
             <p>URL: {window.location.href}</p>
             <p>Status: {callbackState.status}</p>
+            <p>User Email: {state.user?.email || 'Not available'}</p>
             <p>Timestamp: {new Date().toISOString()}</p>
           </div>
         )}

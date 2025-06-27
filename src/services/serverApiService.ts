@@ -37,6 +37,14 @@ export interface ComposioConnectionResponse {
   timestamp: string;
 }
 
+export interface UserGoogleCalendarConnectionResponse {
+  success: boolean;
+  agentId?: string;
+  message?: string;
+  error?: string;
+  timestamp: string;
+}
+
 class ServerApiService {
   private baseUrl: string;
 
@@ -80,6 +88,26 @@ class ServerApiService {
    */
   async checkServerHealth(): Promise<{ status: string; services: any; timestamp: string }> {
     return this.makeRequest('/api/health');
+  }
+
+  /**
+   * Connect user's Google Calendar to server integration
+   */
+  async connectUserGoogleCalendar(
+    userEmail: string,
+    accessToken: string,
+    refreshToken?: string,
+    expiresIn?: number
+  ): Promise<UserGoogleCalendarConnectionResponse> {
+    return this.makeRequest('/api/user/connect-google-calendar', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        accessToken, 
+        refreshToken, 
+        expiresIn 
+      }),
+    });
   }
 
   /**
@@ -147,6 +175,13 @@ class ServerApiService {
     return this.makeRequest('/api/composio/test-connection', {
       method: 'POST',
     });
+  }
+
+  /**
+   * Get service statistics
+   */
+  async getServiceStats(): Promise<{ success: boolean; stats: any; error?: string; timestamp: string }> {
+    return this.makeRequest('/api/stats');
   }
 
   /**

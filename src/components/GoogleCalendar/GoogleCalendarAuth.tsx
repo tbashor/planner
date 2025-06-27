@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key, TestTube, Zap } from 'lucide-react';
+import { Calendar, ExternalLink, RefreshCw, LogOut, CheckCircle, AlertCircle, Shield, Key, TestTube, Zap, Link } from 'lucide-react';
 import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
 import { serverApiService } from '../../services/serverApiService';
@@ -15,6 +15,8 @@ export default function GoogleCalendarAuth() {
   const [showComposioTest, setShowComposioTest] = useState(false);
   const [composioTestResults, setComposioTestResults] = useState<any>(null);
   const [isTestingComposio, setIsTestingComposio] = useState(false);
+  const [isConnectedToServer, setIsConnectedToServer] = useState(false);
+  const [isConnectingToServer, setIsConnectingToServer] = useState(false);
 
   useEffect(() => {
     checkAuthenticationStatus();
@@ -60,10 +62,48 @@ export default function GoogleCalendarAuth() {
     }
   };
 
+  const handleConnectToServer = async () => {
+    if (!isAuthenticated || !state.user?.email) {
+      setError('Please authenticate with Google Calendar first');
+      return;
+    }
+
+    setIsConnectingToServer(true);
+    setError(null);
+
+    try {
+      console.log('🔗 Connecting to server integration for user:', state.user.email);
+      
+      const success = await googleCalendarService.connectToServerIntegration(state.user.email);
+      
+      if (success) {
+        setIsConnectedToServer(true);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `🎉 Excellent! Your Google Calendar is now fully integrated with the AI assistant. I can now directly create, update, and manage events in your Google Calendar using natural language commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "create a workout session for Friday morning"!`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } else {
+        throw new Error('Failed to connect to server integration');
+      }
+    } catch (err: any) {
+      console.error('❌ Error connecting to server:', err);
+      setError(err.message || 'Failed to connect to server integration');
+    } finally {
+      setIsConnectingToServer(false);
+    }
+  };
+
   const handleSignOut = () => {
     oauthService.clearTokens();
     googleCalendarService.signOut();
     setIsAuthenticated(false);
+    setIsConnectedToServer(false);
     setCalendars([]);
     setError(null);
     
@@ -154,10 +194,15 @@ export default function GoogleCalendarAuth() {
       const googleCalendarTest = await serverApiService.composioConnectGoogleCalendar();
       console.log('📅 Google Calendar connection test:', googleCalendarTest);
 
+      // Get service stats
+      const serviceStats = await serverApiService.getServiceStats();
+      console.log('📊 Service stats:', serviceStats);
+
       setComposioTestResults({
         serverHealth: healthCheck,
         composioConnection: connectionTest,
         googleCalendarConnection: googleCalendarTest,
+        serviceStats: serviceStats,
         timestamp: new Date().toISOString()
       });
 
@@ -218,6 +263,11 @@ export default function GoogleCalendarAuth() {
             state.isDarkMode ? 'text-green-400' : 'text-green-600'
           }`} />
         )}
+        {isConnectedToServer && (
+          <Link className={`h-3 w-3 ${
+            state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
+          }`} />
+        )}
       </div>
 
       {error && (
@@ -248,7 +298,7 @@ export default function GoogleCalendarAuth() {
             <span className={`text-xs font-medium ${
               state.isDarkMode ? 'text-purple-400' : 'text-purple-600'
             }`}>
-              Composio Integration Test
+              Server Integration Test
             </span>
           </div>
           <button
@@ -266,7 +316,7 @@ export default function GoogleCalendarAuth() {
             <p className={`text-xs ${
               state.isDarkMode ? 'text-purple-300' : 'text-purple-700'
             }`}>
-              Test the server-side Composio integration with Google Calendar
+              Test the server-side Letta and Composio integration
             </p>
 
             <button
@@ -281,7 +331,7 @@ export default function GoogleCalendarAuth() {
               }`}
             >
               <Zap className={`h-3 w-3 ${isTestingComposio ? 'animate-spin' : ''}`} />
-              <span>{isTestingComposio ? 'Testing...' : 'Test Composio Connection'}</span>
+              <span>{isTestingComposio ? 'Testing...' : 'Test Server Integration'}</span>
             </button>
 
             {/* Test Results */}
@@ -306,7 +356,7 @@ export default function GoogleCalendarAuth() {
           <p className={`text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            Connect your Google Calendar to see all your events in one place, drag them around, edit them directly, and get better AI scheduling suggestions.
+            Connect your Google Calendar to enable AI-powered calendar management with direct Google Calendar integration.
           </p>
           
           <div className={`p-3 rounded-lg text-xs ${
@@ -382,6 +432,46 @@ export default function GoogleCalendarAuth() {
               Connected with full editing permissions
             </span>
           </div>
+
+          {/* Server Integration Status */}
+          {!isConnectedToServer && (
+            <div className={`p-3 rounded-lg text-xs ${
+              state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
+            }`}>
+              <div className="flex items-center space-x-2 mb-2">
+                <Link className="h-4 w-4" />
+                <span className="font-medium">AI Integration Available</span>
+              </div>
+              <p className="mb-3">Connect to enable AI-powered calendar management with direct Google Calendar integration.</p>
+              
+              <button
+                onClick={handleConnectToServer}
+                disabled={isConnectingToServer || !state.user?.email}
+                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                  isConnectingToServer || !state.user?.email
+                    ? 'opacity-50 cursor-not-allowed'
+                    : state.isDarkMode
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'bg-purple-500 text-white hover:bg-purple-600'
+                }`}
+              >
+                <Link className={`h-3 w-3 ${isConnectingToServer ? 'animate-spin' : ''}`} />
+                <span>{isConnectingToServer ? 'Connecting...' : 'Connect AI Integration'}</span>
+              </button>
+            </div>
+          )}
+
+          {isConnectedToServer && (
+            <div className={`p-3 rounded-lg text-xs ${
+              state.isDarkMode ? 'bg-purple-900 bg-opacity-20 text-purple-400' : 'bg-purple-50 text-purple-600'
+            }`}>
+              <div className="flex items-center space-x-2 mb-2">
+                <Link className="h-4 w-4" />
+                <span className="font-medium">AI Integration Active</span>
+              </div>
+              <p>Your Google Calendar is now fully integrated with the AI assistant. You can create, update, and manage events using natural language!</p>
+            </div>
+          )}
 
           <div className={`text-xs p-2 rounded-lg ${
             state.isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'

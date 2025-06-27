@@ -1,5 +1,6 @@
 import { LettaClient, Letta } from '@letta-ai/letta-client';
 import { Event, UserPreferences, AiSuggestion } from '../../src/types/index.js';
+import { ComposioService } from './composioService.js';
 
 export interface LettaConfig {
   baseUrl: string;
@@ -25,32 +26,12 @@ export interface LettaResponse {
 export class LettaServerService {
   private config: LettaConfig;
   private client: LettaClient;
+  private composioService: ComposioService;
   private conversationHistory: LettaMessage[] = [];
-  private currentAgentId: string | null = null;
+  private userAgents: Map<string, string> = new Map(); // userEmail -> agentId
   private requestCounter = 0;
   private agentCreationFailed = false;
   private lastError: string | null = null;
-  private googleCalendarToolIds: string[] = [];
-
-  // Google Calendar tools that we want to add to the agent
-  private readonly GOOGLE_CALENDAR_TOOLS = [
-    'GOOGLECALENDAR_PATCH_EVENT',
-    'GOOGLECALENDAR_CALENDARS_UPDATE', 
-    'GOOGLECALENDAR_CREATE_EVENT',
-    'GOOGLECALENDAR_DELETE_EVENT',
-    'GOOGLECALENDAR_EVENTS_INSTANCES',
-    'GOOGLECALENDAR_EVENTS_LIST',
-    'GOOGLECALENDAR_EVENTS_MOVE',
-    'GOOGLECALENDAR_FIND_EVENT',
-    'GOOGLECALENDAR_FREE_BUSY_QUERY',
-    'GOOGLECALENDAR_GET_CALENDAR',
-    'GOOGLECALENDAR_GET_CURRENT_DATE_TIME',
-    'GOOGLECALENDAR_LIST_CALENDARS',
-    'GOOGLECALENDAR_PATCH_CALENDAR',
-    'GOOGLECALENDAR_QUICK_ADD',
-    'GOOGLECALENDAR_REMOVE_ATTENDEE',
-    'GOOGLECALENDAR_UPDATE_EVENT'
-  ];
 
   constructor() {
     // Load configuration from environment variables
@@ -66,17 +47,51 @@ export class LettaServerService {
       baseUrl: this.config.baseUrl,
       token: this.config.apiKey,
     });
+
+    // Initialize Composio service
+    this.composioService = new ComposioService();
     
     console.log('🤖 Letta Server Service initialized:');
     console.log('- Base URL:', this.config.baseUrl);
     console.log('- Project Slug:', this.config.projectSlug);
     console.log('- Template:', this.config.templateName);
-    console.log('- Agent ID:', this.config.agentId || 'Will be created');
+    console.log('- Agent ID:', this.config.agentId || 'Will be created per user');
     console.log('- API Key:', this.config.apiKey ? 'Configured ✅' : 'Not configured ❌');
-    console.log('- Google Calendar Tools:', this.GOOGLE_CALENDAR_TOOLS.length, 'tools to add');
+    console.log('- Composio Service:', 'Initialized ✅');
     
     if (!this.config.apiKey) {
       console.warn('⚠️ WARNING: No API key configured. Letta functionality will be limited.');
+    }
+  }
+
+  /**
+   * Connect user's Google Account to Composio and create/update their agent
+   */
+  async connectUserGoogleAccount(userEmail: string, accessToken: string, refreshToken?: string, expiresIn?: number): Promise<string> {
+    try {
+      console.log('🔗 Connecting user Google Account:', userEmail);
+
+      // Connect the user's Google Account to Composio
+      const connectionId = await this.composioService.connectUserGoogleAccount(
+        userEmail, 
+        accessToken, 
+        refreshToken, 
+        expiresIn
+      );
+
+      // Get or create agent for this user with Google Calendar tools
+      const agentId = await this.getOrCreateAgentForUser(userEmail, true);
+
+      console.log('✅ User Google Account connected and agent updated:', {
+        userEmail,
+        connectionId,
+        agentId
+      });
+
+      return agentId;
+    } catch (error) {
+      console.error('❌ Failed to connect user Google Account:', error);
+      throw error;
     }
   }
 
@@ -91,7 +106,6 @@ export class LettaServerService {
     console.log('📤 Request Details:');
     console.log('- Timestamp:', new Date().toISOString());
     console.log('- Operation:', operation);
-    console.log('- Agent ID:', this.currentAgentId || 'Not set');
     
     if (Object.keys(details).length > 0) {
       console.log('- Additional Details:', details);
@@ -185,146 +199,97 @@ The AI assistant will work for basic chat without calendar tools.`;
   }
 
   /**
-   * Add Composio Google Calendar tools to Letta
-   */
-  private async addComposioTools(): Promise<string[]> {
-    const requestId = this.logRequest('Add Composio Tools', {
-      toolCount: this.GOOGLE_CALENDAR_TOOLS.length,
-      tools: this.GOOGLE_CALENDAR_TOOLS
-    });
-
-    try {
-      console.log('🛠️ Adding Composio Google Calendar tools to Letta...');
-      const toolIds: string[] = [];
-
-      for (const toolName of this.GOOGLE_CALENDAR_TOOLS) {
-        try {
-          console.log(`📦 Adding tool: ${toolName}`);
-          
-          const tool = await this.client.tools.addComposioTool(toolName);
-          
-          if (tool && tool.id) {
-            toolIds.push(tool.id);
-            console.log(`✅ Added tool ${toolName} with ID: ${tool.id}`);
-          } else {
-            console.warn(`⚠️ Tool ${toolName} was added but no ID returned`);
-          }
-        } catch (toolError) {
-          console.warn(`⚠️ Failed to add tool ${toolName}:`, toolError);
-          // Continue with other tools even if one fails
-        }
-      }
-
-      this.googleCalendarToolIds = toolIds;
-
-      this.logResponse(requestId, 'Add Composio Tools', true, {
-        toolsRequested: this.GOOGLE_CALENDAR_TOOLS.length,
-        toolsAdded: toolIds.length,
-        toolIds: toolIds
-      });
-
-      console.log(`🎉 Successfully added ${toolIds.length}/${this.GOOGLE_CALENDAR_TOOLS.length} Google Calendar tools`);
-      return toolIds;
-
-    } catch (error) {
-      this.logResponse(requestId, 'Add Composio Tools', false, {}, error);
-      console.error('❌ Failed to add Composio tools:', error);
-      
-      // Return empty array but don't fail - agent can still work without tools
-      return [];
-    }
-  }
-
-  /**
    * Generate agent name based on user email
    */
-  private generateAgentName(userEmail?: string): string {
-    if (userEmail) {
-      return `calendar-planner-${userEmail}`;
-    }
-    
-    // Fallback if no user email is available
-    return `calendar-planner-${Date.now()}`;
+  private generateAgentName(userEmail: string): string {
+    return `calendar-planner-${userEmail}`;
   }
 
   /**
-   * Get or create an agent for the current session with Composio tools
+   * Get or create an agent for a specific user
    */
-  private async getOrCreateAgent(userEmail?: string): Promise<string> {
+  private async getOrCreateAgentForUser(userEmail: string, withGoogleCalendarTools: boolean = false): Promise<string> {
     // If we previously failed to create an agent due to limits, don't try again
     if (this.agentCreationFailed) {
       throw new Error(this.lastError || 'Agent creation previously failed due to account limits');
     }
 
-    if (this.currentAgentId) {
-      console.log('🔄 Using cached agent ID:', this.currentAgentId);
-      return this.currentAgentId;
+    // Check if we already have an agent for this user
+    const existingAgentId = this.userAgents.get(userEmail);
+    if (existingAgentId) {
+      console.log('🔄 Using cached agent for user:', userEmail, existingAgentId);
+      return existingAgentId;
     }
 
-    // If we have a specific agent ID, use it
+    // If we have a specific agent ID in config, use it (fallback)
     if (this.config.agentId) {
-      const requestId = this.logRequest('Agent Retrieval', { agentId: this.config.agentId });
+      const requestId = this.logRequest('Agent Retrieval', { 
+        agentId: this.config.agentId,
+        userEmail 
+      });
       
       try {
         const startTime = performance.now();
         const agent = await this.client.agents.retrieve(this.config.agentId);
         const endTime = performance.now();
         
-        this.currentAgentId = this.config.agentId;
+        this.userAgents.set(userEmail, this.config.agentId);
         
         this.logResponse(requestId, 'Agent Retrieval', true, {
           agentId: agent.id,
           agentName: agent.name,
+          userEmail,
           duration: Math.round(endTime - startTime) + 'ms'
         });
         
-        console.log('✅ Using existing agent:', this.config.agentId);
-        return this.currentAgentId;
+        console.log('✅ Using existing agent for user:', userEmail, this.config.agentId);
+        return this.config.agentId;
       } catch (error) {
         this.logResponse(requestId, 'Agent Retrieval', false, {}, error);
         console.warn('⚠️ Specified agent not found, will try to create new one:', error);
       }
     }
 
-    // Add Composio tools first
-    console.log('🛠️ Adding Composio Google Calendar tools...');
-    const toolIds = await this.addComposioTools();
-    
-    if (toolIds.length > 0) {
-      console.log(`🎯 Will create agent with ${toolIds.length} Google Calendar tools`);
-    } else {
-      console.log('⚠️ No tools added - creating agent without Google Calendar tools');
+    // Get Google Calendar tools for this user if requested
+    let toolIds: string[] = [];
+    if (withGoogleCalendarTools && this.composioService.hasUserConnection(userEmail)) {
+      try {
+        toolIds = await this.composioService.addGoogleCalendarToolsForUser(userEmail);
+        console.log(`🛠️ Added ${toolIds.length} Google Calendar tools for user: ${userEmail}`);
+      } catch (error) {
+        console.warn('⚠️ Failed to add Google Calendar tools, creating agent without them:', error);
+      }
     }
 
-    // Create a new agent from template with tools
+    // Create a new agent for this user
     const agentName = this.generateAgentName(userEmail);
     const requestId = this.logRequest('Agent Creation', { 
       templateName: this.config.templateName,
       projectSlug: this.config.projectSlug,
       agentName: agentName,
-      userEmail: userEmail || 'Not provided',
+      userEmail: userEmail,
       toolCount: toolIds.length,
       toolIds: toolIds
     });
     
     try {
-      console.log('🔄 Creating new agent with Composio tools...');
+      console.log('🔄 Creating new agent for user:', userEmail);
       console.log('📧 Agent name will be:', agentName);
       console.log('🛠️ Tools to attach:', toolIds.length);
       
       const startTime = performance.now();
       
-      // Create agent with Composio tools
+      // Create agent with user-specific Google Calendar tools
       const agentConfig: any = {
         name: agentName,
-        description: `AI assistant for calendar management and scheduling with Google Calendar integration${userEmail ? ` for ${userEmail}` : ''}`,
+        description: `AI assistant for calendar management and scheduling with Google Calendar integration for ${userEmail}`,
         memoryBlocks: [
           {
-            value: "I am a helpful AI assistant specialized in calendar management and scheduling. I can help you create, update, and manage Google Calendar events using natural language. I understand your preferences and can suggest optimal times for activities.",
+            value: `I am a helpful AI assistant specialized in calendar management and scheduling for ${userEmail}. I can help create, update, and manage Google Calendar events using natural language. I understand user preferences and can suggest optimal times for activities.`,
             label: "persona",
           },
           {
-            value: "I have access to Google Calendar tools and can perform actions like creating events, listing calendars, finding free time slots, and managing calendar entries. I always confirm actions before making changes.",
+            value: `I have access to ${userEmail}'s Google Calendar through Composio tools and can perform actions like creating events, listing calendars, finding free time slots, and managing calendar entries. I always confirm actions before making changes to the user's calendar.`,
             label: "capabilities",
           }
         ],
@@ -338,28 +303,25 @@ The AI assistant will work for basic chat without calendar tools.`;
         console.log('🔗 Attaching tools to agent:', toolIds);
       }
 
-      // Don't use fromTemplate if we're adding custom tools
       const response = await this.client.agents.create(agentConfig);
       const endTime = performance.now();
 
       if (response && response.id) {
-        this.currentAgentId = response.id;
+        this.userAgents.set(userEmail, response.id);
         
         this.logResponse(requestId, 'Agent Creation', true, {
           agentId: response.id,
           agentName: response.name,
-          userEmail: userEmail || 'Not provided',
+          userEmail: userEmail,
           toolsAttached: toolIds.length,
           duration: Math.round(endTime - startTime) + 'ms'
         });
         
-        console.log('✅ Created new agent with Google Calendar tools:', this.currentAgentId);
+        console.log('✅ Created new agent for user:', userEmail, response.id);
         console.log('📧 Agent name:', agentName);
         console.log('🛠️ Tools attached:', toolIds.length);
-        console.log('💡 To avoid creating new agents in the future, add this to your .env file:');
-        console.log(`   VITE_LETTA_AGENT_ID=${this.currentAgentId}`);
         
-        return this.currentAgentId;
+        return response.id;
       } else {
         throw new Error('No agent ID returned from agent creation');
       }
@@ -388,8 +350,8 @@ The AI assistant will work for basic chat without calendar tools.`;
         throw new Error(this.lastError);
       }
       
-      console.error('❌ Failed to create agent:', error);
-      throw new Error(`Failed to create agent: ${error}`);
+      console.error('❌ Failed to create agent for user:', userEmail, error);
+      throw new Error(`Failed to create agent for ${userEmail}: ${error}`);
     }
   }
 
@@ -402,26 +364,28 @@ The AI assistant will work for basic chat without calendar tools.`;
       userEmail?: string;
     }
   ): Promise<LettaResponse> {
+    const userEmail = context?.userEmail || 'anonymous';
     const requestId = this.logRequest('Send Message', {
       messageLength: message.length,
       hasContext: !!context,
       contextEvents: context?.events?.length || 0,
       hasPreferences: !!context?.preferences,
-      userEmail: context?.userEmail || 'Not provided',
-      toolsAvailable: this.googleCalendarToolIds.length
+      userEmail: userEmail,
+      hasGoogleCalendarAccess: this.composioService.hasUserConnection(userEmail)
     });
 
     try {
-      // Ensure we have an agent (pass user email for agent naming)
-      const agentId = await this.getOrCreateAgent(context?.userEmail);
+      // Ensure we have an agent for this user
+      const hasGoogleCalendar = this.composioService.hasUserConnection(userEmail);
+      const agentId = await this.getOrCreateAgentForUser(userEmail, hasGoogleCalendar);
 
       // Log the outgoing message
       console.log('💬 Sending message to Letta agent:', {
         agentId,
         messagePreview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
         contextProvided: !!context,
-        userEmail: context?.userEmail || 'Not provided',
-        toolsAvailable: this.googleCalendarToolIds.length
+        userEmail: userEmail,
+        hasGoogleCalendarAccess: hasGoogleCalendar
       });
 
       // Add user message to conversation history
@@ -456,11 +420,12 @@ The AI assistant will work for basic chat without calendar tools.`;
         });
       }
 
-      console.log('📤 Sending message to Letta agent:', {
+      console.log('📤 Sending message to user-specific Letta agent:', {
         agentId,
+        userEmail,
         messageCount: messages.length,
         totalCharacters: messages.reduce((sum, msg) => sum + msg.content.length, 0),
-        hasGoogleCalendarTools: this.googleCalendarToolIds.length > 0
+        hasGoogleCalendarTools: hasGoogleCalendar
       });
 
       // Send message to Letta agent using the SDK
@@ -471,10 +436,11 @@ The AI assistant will work for basic chat without calendar tools.`;
       });
       const endTime = performance.now();
 
-      console.log('📥 Received response from Letta:', {
+      console.log('📥 Received response from user-specific Letta agent:', {
         responseTime: Math.round(endTime - startTime) + 'ms',
         messageCount: response.messages?.length || 0,
-        responseId: response.id || 'No ID'
+        responseId: response.id || 'No ID',
+        userEmail
       });
 
       // Extract the assistant's message from the response with improved logic
@@ -496,13 +462,14 @@ The AI assistant will work for basic chat without calendar tools.`;
         suggestionsCount: lettaResponse.suggestions?.length || 0,
         eventsCount: lettaResponse.events?.length || 0,
         conversationLength: this.conversationHistory.length,
-        toolsUsed: this.googleCalendarToolIds.length > 0 ? 'Available' : 'None'
+        userEmail,
+        toolsUsed: hasGoogleCalendar ? 'Google Calendar Available' : 'Basic Tools Only'
       });
 
       return lettaResponse;
     } catch (error) {
       this.logResponse(requestId, 'Send Message', false, {}, error);
-      console.error('❌ Error communicating with Letta agent:', error);
+      console.error('❌ Error communicating with Letta agent for user:', userEmail, error);
       
       // Return a more helpful fallback response based on the error type
       let fallbackMessage = "I'm having trouble connecting to my AI assistant right now.";
@@ -616,6 +583,10 @@ The AI assistant will work for basic chat without calendar tools.`;
 
     if (context.userEmail) {
       parts.push(`User email: ${context.userEmail}`);
+      
+      // Add Google Calendar connection status
+      const hasGoogleCalendar = this.composioService.hasUserConnection(context.userEmail);
+      parts.push(`Google Calendar access: ${hasGoogleCalendar ? 'Connected' : 'Not connected'}`);
     }
 
     if (context.events && context.events.length > 0) {
@@ -636,11 +607,6 @@ The AI assistant will work for basic chat without calendar tools.`;
       }
     }
 
-    // Add tool availability info
-    if (this.googleCalendarToolIds.length > 0) {
-      parts.push(`Google Calendar tools available: ${this.googleCalendarToolIds.length} tools for calendar management`);
-    }
-
     const contextMessage = parts.length > 0 ? parts.join('\n') : null;
     
     if (contextMessage) {
@@ -650,7 +616,7 @@ The AI assistant will work for basic chat without calendar tools.`;
         hasEvents: !!(context?.events?.length),
         hasPreferences: !!context?.preferences,
         userEmail: context?.userEmail || 'Not provided',
-        toolsAvailable: this.googleCalendarToolIds.length
+        hasGoogleCalendarAccess: context?.userEmail ? this.composioService.hasUserConnection(context.userEmail) : false
       });
     }
 
@@ -660,8 +626,7 @@ The AI assistant will work for basic chat without calendar tools.`;
   private processLettaResponse(response: string): LettaResponse {
     console.log('🔄 Processing Letta response:', {
       responseLength: response.length,
-      responsePreview: response.substring(0, 150) + (response.length > 150 ? '...' : ''),
-      hasGoogleCalendarTools: this.googleCalendarToolIds.length > 0
+      responsePreview: response.substring(0, 150) + (response.length > 150 ? '...' : '')
     });
 
     // Return the actual response from the agent
@@ -679,31 +644,35 @@ The AI assistant will work for basic chat without calendar tools.`;
     currentDate: Date,
     userEmail?: string
   ): Promise<AiSuggestion[]> {
+    const user = userEmail || 'anonymous';
     const requestId = this.logRequest('Generate Suggestions', {
       eventsCount: events.length,
       focusAreas: preferences.focusAreas?.length || 0,
       currentDate: currentDate.toISOString().split('T')[0],
-      userEmail: userEmail || 'Not provided',
-      toolsAvailable: this.googleCalendarToolIds.length
+      userEmail: user,
+      hasGoogleCalendarAccess: this.composioService.hasUserConnection(user)
     });
 
     try {
-      const agentId = await this.getOrCreateAgent(userEmail);
+      const hasGoogleCalendar = this.composioService.hasUserConnection(user);
+      const agentId = await this.getOrCreateAgentForUser(user, hasGoogleCalendar);
 
       const contextMessage = `Please generate 3-5 personalized calendar suggestions based on:
 - Current events: ${events.map(e => `${e.date} ${e.startTime}: ${e.title}`).join(', ')}
 - Focus areas: ${preferences.focusAreas?.join(', ') || 'general productivity'}
 - Working hours: ${preferences.workingHours?.start || '9:00'} to ${preferences.workingHours?.end || '17:00'}
 - Current date: ${currentDate.toISOString().split('T')[0]}
-${userEmail ? `- User: ${userEmail}` : ''}
+- User: ${user}
+- Google Calendar access: ${hasGoogleCalendar ? 'Available' : 'Not available'}
 
-You have access to Google Calendar tools and can suggest creating actual calendar events. Return suggestions for productive activities, breaks, or schedule optimizations.`;
+${hasGoogleCalendar ? 'You can create actual Google Calendar events using the available tools.' : 'Suggest activities that can be added to the local calendar.'}
+Return suggestions for productive activities, breaks, or schedule optimizations.`;
 
       console.log('📤 Generating suggestions with context:', {
         contextLength: contextMessage.length,
         agentId,
-        userEmail: userEmail || 'Not provided',
-        toolsAvailable: this.googleCalendarToolIds.length
+        userEmail: user,
+        hasGoogleCalendarAccess: hasGoogleCalendar
       });
 
       const startTime = performance.now();
@@ -721,26 +690,29 @@ You have access to Google Calendar tools and can suggest creating actual calenda
       this.logResponse(requestId, 'Generate Suggestions', true, {
         duration: Math.round(endTime - startTime) + 'ms',
         suggestionsGenerated: 0, // Will be updated when parsing is implemented
-        toolsUsed: this.googleCalendarToolIds.length > 0 ? 'Available' : 'None'
+        userEmail: user,
+        toolsUsed: hasGoogleCalendar ? 'Google Calendar Available' : 'Basic Tools Only'
       });
 
       // For now, return empty array - you could parse the response for structured suggestions
       return [];
     } catch (error) {
       this.logResponse(requestId, 'Generate Suggestions', false, {}, error);
-      console.error('❌ Error generating suggestions from Letta agent:', error);
+      console.error('❌ Error generating suggestions from Letta agent for user:', user, error);
       return [];
     }
   }
 
   // Health check using SDK
   async healthCheck(userEmail?: string): Promise<boolean> {
+    const user = userEmail || 'anonymous';
     const requestId = this.logRequest('Health Check', {
       hasApiKey: !!this.config.apiKey,
       baseUrl: this.config.baseUrl,
       agentCreationFailed: this.agentCreationFailed,
-      userEmail: userEmail || 'Not provided',
-      toolsConfigured: this.GOOGLE_CALENDAR_TOOLS.length
+      userEmail: user,
+      hasGoogleCalendarAccess: this.composioService.hasUserConnection(user),
+      userAgentsCount: this.userAgents.size
     });
 
     try {
@@ -757,11 +729,12 @@ You have access to Google Calendar tools and can suggest creating actual calenda
         return false;
       }
 
-      console.log('🏥 Performing Letta health check...');
+      console.log('🏥 Performing Letta health check for user:', user);
       
       // Try to get or create an agent as a health check
       const startTime = performance.now();
-      const agentId = await this.getOrCreateAgent(userEmail);
+      const hasGoogleCalendar = this.composioService.hasUserConnection(user);
+      const agentId = await this.getOrCreateAgentForUser(user, hasGoogleCalendar);
       const endTime = performance.now();
       
       const isHealthy = !!agentId;
@@ -770,21 +743,23 @@ You have access to Google Calendar tools and can suggest creating actual calenda
         agentId,
         duration: Math.round(endTime - startTime) + 'ms',
         connectionStatus: isHealthy ? 'Connected' : 'Failed',
-        userEmail: userEmail || 'Not provided',
-        toolsAttached: this.googleCalendarToolIds.length
+        userEmail: user,
+        hasGoogleCalendarAccess: hasGoogleCalendar,
+        userAgentsCount: this.userAgents.size
       });
 
       return isHealthy;
     } catch (error) {
       this.logResponse(requestId, 'Health Check', false, {}, error);
-      console.error('❌ Letta agent health check failed:', error);
+      console.error('❌ Letta agent health check failed for user:', user, error);
       return false;
     }
   }
 
-  // Get current agent ID
-  getCurrentAgentId(): string | null {
-    return this.currentAgentId;
+  // Get current agent ID for a user
+  getCurrentAgentId(userEmail?: string): string | null {
+    const user = userEmail || 'anonymous';
+    return this.userAgents.get(user) || null;
   }
 
   // Get last error message
@@ -792,12 +767,28 @@ You have access to Google Calendar tools and can suggest creating actual calenda
     return this.lastError;
   }
 
-  // Get Google Calendar tool information
-  getGoogleCalendarToolInfo(): { toolNames: string[]; toolIds: string[]; count: number } {
+  // Get service statistics
+  getServiceStats() {
+    const composioStats = this.composioService.getUserConnectionsSummary();
+    
     return {
-      toolNames: this.GOOGLE_CALENDAR_TOOLS,
-      toolIds: this.googleCalendarToolIds,
-      count: this.googleCalendarToolIds.length
+      requestCount: this.requestCounter,
+      conversationLength: this.conversationHistory.length,
+      userAgentsCount: this.userAgents.size,
+      agentCreationFailed: this.agentCreationFailed,
+      lastError: this.lastError,
+      composioConnections: composioStats,
+      configurationStatus: {
+        hasApiKey: !!this.config.apiKey,
+        baseUrl: this.config.baseUrl,
+        projectSlug: this.config.projectSlug,
+        templateName: this.config.templateName
+      }
     };
+  }
+
+  // Get Composio service instance
+  getComposioService(): ComposioService {
+    return this.composioService;
   }
 }

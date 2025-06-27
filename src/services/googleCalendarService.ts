@@ -1,6 +1,7 @@
 import { Event } from '../types';
 import { format, parseISO } from 'date-fns';
 import { oauthService } from './oauthService';
+import { serverApiService } from './serverApiService';
 
 interface GoogleCalendarEvent {
   id: string;
@@ -38,6 +39,7 @@ class GoogleCalendarService {
     console.log('🔧 Google Calendar Service initialized');
     console.log('- Base URL:', this.baseUrl);
     console.log('- Using OAuth service for authentication');
+    console.log('- Server API integration enabled');
   }
 
   /**
@@ -53,6 +55,42 @@ class GoogleCalendarService {
   signOut() {
     oauthService.clearTokens();
     console.log('👋 Google Calendar service signed out');
+  }
+
+  /**
+   * Connect user's Google Calendar to the server-side Letta/Composio integration
+   */
+  async connectToServerIntegration(userEmail: string): Promise<boolean> {
+    try {
+      if (!this.isAuthenticated()) {
+        throw new Error('User is not authenticated with Google Calendar');
+      }
+
+      const tokens = oauthService.getStoredTokens();
+      if (!tokens) {
+        throw new Error('No valid tokens available');
+      }
+
+      console.log('🔗 Connecting user Google Calendar to server integration:', userEmail);
+
+      // Send user's tokens to server to connect with Composio
+      const response = await serverApiService.connectUserGoogleCalendar(
+        userEmail,
+        tokens.access_token,
+        (tokens as any).refresh_token,
+        (tokens as any).expires_in
+      );
+
+      if (response.success) {
+        console.log('✅ User Google Calendar connected to server integration:', response.agentId);
+        return true;
+      } else {
+        throw new Error(response.error || 'Failed to connect to server integration');
+      }
+    } catch (error) {
+      console.error('❌ Failed to connect to server integration:', error);
+      return false;
+    }
   }
 
   /**

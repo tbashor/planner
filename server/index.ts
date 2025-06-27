@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { LettaServerService } from './services/lettaServerService.js';
-import { ComposioService } from './services/composioService.js';
 
 // Load environment variables
 dotenv.config();
@@ -19,7 +18,6 @@ app.use(express.json());
 
 // Initialize services
 const lettaService = new LettaServerService();
-const composioService = new ComposioService();
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -33,6 +31,44 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// User Google Account connection endpoint
+app.post('/api/user/connect-google-calendar', async (req, res) => {
+  try {
+    const { userEmail, accessToken, refreshToken, expiresIn } = req.body;
+    
+    if (!userEmail || !accessToken) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'userEmail and accessToken are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log('🔗 Connecting user Google Calendar:', userEmail);
+    
+    const agentId = await lettaService.connectUserGoogleAccount(
+      userEmail, 
+      accessToken, 
+      refreshToken, 
+      expiresIn
+    );
+    
+    res.json({
+      success: true,
+      agentId,
+      message: `Google Calendar connected successfully for ${userEmail}`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Failed to connect user Google Calendar:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Letta endpoints
 app.post('/api/letta/health-check', async (req, res) => {
   try {
@@ -41,7 +77,7 @@ app.post('/api/letta/health-check', async (req, res) => {
     
     res.json({ 
       healthy: isHealthy,
-      agentId: lettaService.getCurrentAgentId(),
+      agentId: lettaService.getCurrentAgentId(userEmail),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -110,6 +146,7 @@ app.post('/api/composio/connect-google-calendar', async (req, res) => {
   try {
     console.log('🔄 Initiating Google Calendar connection via Composio...');
     
+    const composioService = lettaService.getComposioService();
     const connection = await composioService.initiateGoogleCalendarConnection();
     
     console.log('✅ Google Calendar connection initiated successfully');
@@ -134,6 +171,7 @@ app.post('/api/composio/connect-google-calendar', async (req, res) => {
 
 app.get('/api/composio/connections', async (req, res) => {
   try {
+    const composioService = lettaService.getComposioService();
     const connections = await composioService.getConnections();
     
     res.json({
@@ -153,6 +191,7 @@ app.get('/api/composio/connections', async (req, res) => {
 
 app.post('/api/composio/test-connection', async (req, res) => {
   try {
+    const composioService = lettaService.getComposioService();
     const testResult = await composioService.testConnection();
     
     res.json({
@@ -162,6 +201,26 @@ app.post('/api/composio/test-connection', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Composio connection test failed:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Service statistics endpoint
+app.get('/api/stats', async (req, res) => {
+  try {
+    const stats = lettaService.getServiceStats();
+    
+    res.json({
+      success: true,
+      stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Failed to get service stats:', error);
     res.status(500).json({ 
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -198,18 +257,20 @@ app.listen(PORT, () => {
   console.log('');
   console.log('📋 Available endpoints:');
   console.log('  GET  /api/health');
+  console.log('  POST /api/user/connect-google-calendar');
   console.log('  POST /api/letta/health-check');
   console.log('  POST /api/letta/send-message');
   console.log('  POST /api/letta/generate-suggestions');
   console.log('  POST /api/composio/connect-google-calendar');
   console.log('  GET  /api/composio/connections');
   console.log('  POST /api/composio/test-connection');
+  console.log('  GET  /api/stats');
   console.log('');
   
   // Test Composio connection on startup
   setTimeout(async () => {
     try {
-      const composioService = new ComposioService();
+      const composioService = lettaService.getComposioService();
       await composioService.testConnection();
       console.log('✅ Composio service initialized successfully');
     } catch (error) {
