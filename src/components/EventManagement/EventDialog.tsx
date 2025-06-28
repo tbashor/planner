@@ -15,6 +15,7 @@ interface EventDialogProps {
   initialTime?: string;
   mode: 'create' | 'edit' | 'view';
   onEventCreate?: (event: Event) => Promise<void>;
+  onEventUpdate?: (event: Event) => Promise<void>;
 }
 
 interface RecurrenceOptions {
@@ -24,7 +25,7 @@ interface RecurrenceOptions {
   count?: number;
 }
 
-export default function EventDialog({ isOpen, onClose, event, initialDate, initialTime, mode, onEventCreate }: EventDialogProps) {
+export default function EventDialog({ isOpen, onClose, event, initialDate, initialTime, mode, onEventCreate, onEventUpdate }: EventDialogProps) {
   const { state, dispatch } = useApp();
   const { authState } = useAuth();
   const [currentMode, setCurrentMode] = useState(mode);
@@ -225,6 +226,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
         if (onEventCreate) {
           // Use the custom create handler that handles Google Calendar sync
           await onEventCreate(eventData);
+          setConfirmationMessage(`Perfect! "${eventData.title}" has been created and synced with your calendar.`);
         } else {
           // Fallback to local creation
           if (formData.isRecurring) {
@@ -242,57 +244,20 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
         }
       } else {
         // Update event
-        if (isAuthenticated && userEmail) {
-          // Use Composio service for authenticated users
-          try {
-            const response = await composioService.updateCalendarEvent(userEmail, eventData.id, {
-              title: eventData.title,
-              description: eventData.description,
-              startTime: `${eventData.date}T${eventData.startTime}:00`,
-              endTime: `${eventData.date}T${eventData.endTime}:00`,
-            });
-
-            if (response.success) {
-              console.log('✅ Event updated successfully via Composio');
-              
-              if (editRecurringChoice === 'all' && event?.isRecurring) {
-                // Update all recurring events
-                dispatch({ type: 'UPDATE_EVENT', payload: eventData });
-                updateRecurringEvents(eventData);
-                setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes in both local and Google Calendar.`);
-              } else {
-                // Update single event
-                const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
-                dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
-                setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes in both local and Google Calendar.`);
-              }
-            } else {
-              throw new Error(response.error || 'Failed to update event in Google Calendar');
-            }
-          } catch (error) {
-            console.error('❌ Error updating event via Composio:', error);
-            
-            // Still update locally as fallback
-            if (editRecurringChoice === 'all' && event?.isRecurring) {
-              dispatch({ type: 'UPDATE_EVENT', payload: eventData });
-              updateRecurringEvents(eventData);
-              setConfirmationMessage(`Updated "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            } else {
-              const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
-              dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
-              setConfirmationMessage(`Updated "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-          }
+        if (onEventUpdate) {
+          // Use the custom update handler that handles Google Calendar sync
+          await onEventUpdate(eventData);
+          setConfirmationMessage(`Great! "${eventData.title}" has been updated and synced with your calendar.`);
         } else {
-          // Handle local events for non-authenticated users
+          // Fallback to local update
           if (editRecurringChoice === 'all' && event?.isRecurring) {
             dispatch({ type: 'UPDATE_EVENT', payload: eventData });
             updateRecurringEvents(eventData);
-            setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes locally.`);
+            setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes.`);
           } else {
             const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
             dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
-            setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes locally.`);
+            setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes.`);
           }
         }
       }
@@ -330,7 +295,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
     try {
       if (isAuthenticated && userEmail) {
         // Use Composio service for authenticated users
-        const response = await composioService.deleteCalendarEvent(userEmail, event.id);
+        const originalEventId = event.id.replace(/^(google_|event_|composio_)/, '');
+        const response = await composioService.deleteCalendarEvent(userEmail, originalEventId);
         
         if (response.success) {
           console.log('✅ Event deleted successfully via Composio');

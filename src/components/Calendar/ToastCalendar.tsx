@@ -135,7 +135,7 @@ export default function ToastCalendar() {
         borderColor: event.color,
         color: '#ffffff',
         dragBackgroundColor: event.color,
-        isReadOnly: false,
+        isReadOnly: false, // Make ALL events editable
         location: event.description || '',
         raw: event,
       };
@@ -147,6 +147,7 @@ export default function ToastCalendar() {
     const startDate = new Date(toastEvent.start);
     const endDate = new Date(toastEvent.end);
     const allEvents = getAllEvents();
+    const existingEvent = allEvents.find(e => e.id === toastEvent.id);
 
     return {
       id: toastEvent.id,
@@ -154,15 +155,15 @@ export default function ToastCalendar() {
       startTime: format(startDate, 'HH:mm'),
       endTime: format(endDate, 'HH:mm'),
       date: format(startDate, 'yyyy-MM-dd'),
-      category: allEvents.find(e => e.id === toastEvent.id)?.category || {
+      category: existingEvent?.category || {
         id: 'general',
         name: 'General',
         color: toastEvent.backgroundColor || '#3B82F6',
         icon: 'Calendar',
       },
-      priority: allEvents.find(e => e.id === toastEvent.id)?.priority || 'medium',
-      description: toastEvent.location || '',
-      isCompleted: allEvents.find(e => e.id === toastEvent.id)?.isCompleted || false,
+      priority: existingEvent?.priority || 'medium',
+      description: toastEvent.location || existingEvent?.description || '',
+      isCompleted: existingEvent?.isCompleted || false,
       isStatic: false,
       color: toastEvent.backgroundColor || '#3B82F6',
     };
@@ -238,6 +239,13 @@ export default function ToastCalendar() {
         backgroundColor: '#6B7280',
         borderColor: '#6B7280',
         dragBackgroundColor: '#6B7280',
+      },
+      {
+        id: 'general',
+        name: 'General',
+        backgroundColor: '#3B82F6',
+        borderColor: '#3B82F6',
+        dragBackgroundColor: '#3B82F6',
       },
     ],
   };
@@ -338,12 +346,23 @@ export default function ToastCalendar() {
     const { event, changes } = updateData;
     const updatedEvent = convertFromToastEvent({ ...event, ...changes });
     
+    console.log('🔄 Updating event:', {
+      eventId: event.id,
+      title: updatedEvent.title,
+      isAuthenticated,
+      userEmail,
+      changes
+    });
+    
     try {
       if (isAuthenticated && userEmail) {
         // Use Composio service for authenticated users
         console.log('🔄 Updating event via Composio:', updatedEvent.title);
         
-        const response = await composioService.updateCalendarEvent(userEmail, updatedEvent.id, {
+        // Extract the original event ID (remove any prefixes)
+        const originalEventId = event.id.replace(/^(google_|event_|composio_)/, '');
+        
+        const response = await composioService.updateCalendarEvent(userEmail, originalEventId, {
           title: updatedEvent.title,
           description: updatedEvent.description,
           startTime: `${updatedEvent.date}T${updatedEvent.startTime}:00`,
@@ -359,7 +378,7 @@ export default function ToastCalendar() {
           );
           setEventsHistory(updatedEvents);
           
-          // Refresh calendar data
+          // Refresh calendar data to get the latest from Google Calendar
           await fetchCurrentWeek();
           
           dispatch({
@@ -394,6 +413,12 @@ export default function ToastCalendar() {
     } catch (error) {
       console.error('❌ Error updating event:', error);
       
+      // Still update locally as fallback
+      const updatedEvents = state.events.map(e => 
+        e.id === updatedEvent.id ? updatedEvent : e
+      );
+      setEventsHistory(updatedEvents);
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
@@ -407,12 +432,22 @@ export default function ToastCalendar() {
   };
 
   const onBeforeDeleteEvent = async (eventData: any) => {
+    console.log('🗑️ Deleting event:', {
+      eventId: eventData.id,
+      title: eventData.title,
+      isAuthenticated,
+      userEmail
+    });
+    
     try {
       if (isAuthenticated && userEmail) {
         // Use Composio service for authenticated users
         console.log('🗑️ Deleting event via Composio:', eventData.title);
         
-        const response = await composioService.deleteCalendarEvent(userEmail, eventData.id);
+        // Extract the original event ID (remove any prefixes)
+        const originalEventId = eventData.id.replace(/^(google_|event_|composio_)/, '');
+        
+        const response = await composioService.deleteCalendarEvent(userEmail, originalEventId);
         
         if (response.success) {
           console.log('✅ Event deleted successfully via Composio');
@@ -454,6 +489,10 @@ export default function ToastCalendar() {
     } catch (error) {
       console.error('❌ Error deleting event:', error);
       
+      // Still delete locally as fallback
+      const updatedEvents = state.events.filter(e => e.id !== eventData.id);
+      setEventsHistory(updatedEvents);
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
@@ -467,22 +506,47 @@ export default function ToastCalendar() {
   };
 
   const onClickEvent = (eventData: any) => {
-    const event = state.events.find(e => e.id === eventData.event.id);
+    console.log('👆 Event clicked:', eventData.event);
+    
+    // Find the event in our combined events list
+    const allEvents = getAllEvents();
+    const event = allEvents.find(e => e.id === eventData.event.id);
+    
     if (event) {
+      console.log('📝 Opening event dialog for:', event.title);
       setEventDialog({
         isOpen: true,
         mode: 'view',
         event: event,
       });
+    } else {
+      console.warn('⚠️ Event not found in local state:', eventData.event.id);
+      // Create a temporary event object from the Toast UI event data
+      const tempEvent = convertFromToastEvent(eventData.event);
+      setEventDialog({
+        isOpen: true,
+        mode: 'view',
+        event: tempEvent,
+      });
     }
   };
 
   const onRightClickEvent = (eventData: any) => {
-    const event = state.events.find(e => e.id === eventData.event.id);
+    const allEvents = getAllEvents();
+    const event = allEvents.find(e => e.id === eventData.event.id);
+    
     if (event) {
       setContextMenu({
         isOpen: true,
         event: event,
+        position: { x: eventData.nativeEvent.clientX, y: eventData.nativeEvent.clientY },
+      });
+    } else {
+      // Create a temporary event object from the Toast UI event data
+      const tempEvent = convertFromToastEvent(eventData.event);
+      setContextMenu({
+        isOpen: true,
+        event: tempEvent,
         position: { x: eventData.nativeEvent.clientX, y: eventData.nativeEvent.clientY },
       });
     }
@@ -603,6 +667,85 @@ export default function ToastCalendar() {
           id: Date.now().toString(),
           type: 'ai',
           content: `📅 I've created "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  };
+
+  // Enhanced event update handler for dialog
+  const handleUpdateEventFromDialog = async (eventData: Event) => {
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        console.log('🔄 Updating event via Composio from dialog:', eventData.title);
+        
+        // Extract the original event ID (remove any prefixes)
+        const originalEventId = eventData.id.replace(/^(google_|event_|composio_)/, '');
+        
+        const response = await composioService.updateCalendarEvent(userEmail, originalEventId, {
+          title: eventData.title,
+          description: eventData.description,
+          startTime: `${eventData.date}T${eventData.startTime}:00`,
+          endTime: `${eventData.date}T${eventData.endTime}:00`,
+        });
+
+        if (response.success) {
+          console.log('✅ Event updated successfully via Composio from dialog');
+          
+          // Update local state
+          const updatedEvents = state.events.map(e => 
+            e.id === eventData.id ? eventData : e
+          );
+          setEventsHistory(updatedEvents);
+          
+          // Refresh calendar data
+          await fetchCurrentWeek();
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `✅ Perfect! I've updated "${eventData.title}" in both your local calendar and Google Calendar. All changes are synced.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } else {
+          throw new Error(response.error || 'Failed to update event');
+        }
+      } else {
+        // Handle local events for non-authenticated users
+        const updatedEvents = state.events.map(e => 
+          e.id === eventData.id ? eventData : e
+        );
+        setEventsHistory(updatedEvents);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `✅ I've updated "${eventData.title}" in your local calendar. Connect your Google Calendar to sync changes across devices.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error updating event from dialog:', error);
+      
+      // Still update locally as fallback
+      const updatedEvents = state.events.map(e => 
+        e.id === eventData.id ? eventData : e
+      );
+      setEventsHistory(updatedEvents);
+      
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `❌ I couldn't update "${eventData.title}" in Google Calendar. The change was saved locally. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -863,6 +1006,7 @@ export default function ToastCalendar() {
         initialDate={eventDialog.initialDate}
         initialTime={eventDialog.initialTime}
         onEventCreate={handleCreateEventFromDialog}
+        onEventUpdate={handleUpdateEventFromDialog}
       />
 
       <QuickEventCreator
