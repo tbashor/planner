@@ -13,7 +13,8 @@ import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw } from 'luci
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { mockEvents } from '../../data/mockData';
 import composioService from '../../services/composioService';
-import { createEventWithConflictDetection, checkEventUpdateConflicts } from '../../utils/aiUtils';
+import { createEventWithConflictDetection } from '../../utils/aiUtils';
+import { checkEventUpdateConflicts } from '../../utils/conflictDetection';
 
 interface ToastCalendarEvent {
   id: string;
@@ -159,7 +160,7 @@ export default function ToastCalendar() {
       category: existingEvent?.category || {
         id: 'general',
         name: 'General',
-        color: toastEvent.backgroundColor || '#3B82F6',
+        color: '#3B82F6',
         icon: 'Calendar',
       },
       priority: existingEvent?.priority || 'medium',
