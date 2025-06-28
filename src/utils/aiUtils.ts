@@ -49,7 +49,7 @@ export function generateSmartSuggestions(
   return suggestions;
 }
 
-// Enhanced suggestion pool with more variety
+// Enhanced suggestion pool with more variety and personalization
 const suggestionTemplates = {
   health: [
     {
@@ -101,28 +101,80 @@ const suggestionTemplates = {
   ]
 };
 
-// Motivational and productivity insights
-const productivityInsights = [
-  'Your most productive hours are showing a pattern - let\'s optimize around them',
-  'I notice you complete more tasks when you schedule breaks - shall we add some?',
-  'Your energy levels seem highest in the morning - perfect for important work',
-  'You\'ve been consistent with your routines - time to level up with new challenges',
-  'Your focus areas are well-balanced - let\'s maintain this momentum',
-  'I see opportunities to batch similar tasks for better efficiency',
-  'Your schedule has good variety - this promotes sustained motivation',
-  'You\'re building excellent habits - let\'s reinforce them with strategic timing'
-];
+// Enhanced motivational and productivity insights based on user preferences
+const getPersonalizedProductivityInsights = (preferences: UserPreferences): string[] => {
+  const insights = [];
+  
+  if (preferences.productivityHours && preferences.productivityHours.length > 0) {
+    insights.push(`Your peak productivity hours (${preferences.productivityHours.join(', ')}) are perfect for your most important tasks`);
+  }
+  
+  if (preferences.focusAreas && preferences.focusAreas.includes('learning-education')) {
+    insights.push('Your focus on learning is building valuable skills - let\'s schedule consistent study blocks');
+  }
+  
+  if (preferences.focusAreas && preferences.focusAreas.includes('health-fitness')) {
+    insights.push('Your commitment to health is excellent - regular exercise boosts both physical and mental performance');
+  }
+  
+  if (preferences.dailyRoutines && preferences.dailyRoutines.length > 0) {
+    insights.push(`Your daily routines (${preferences.dailyRoutines.join(', ')}) create structure and consistency`);
+  }
+  
+  if (preferences.workingHours) {
+    insights.push(`Your ${preferences.workingHours.start}-${preferences.workingHours.end} work schedule allows for good work-life balance`);
+  }
+  
+  if (preferences.goals && preferences.goals.trim()) {
+    insights.push('Your clear goals provide direction - let\'s align your schedule to achieve them');
+  }
+  
+  // Add generic insights if no specific preferences
+  if (insights.length === 0) {
+    insights.push(
+      'Building consistent habits leads to long-term success',
+      'Time-blocking helps maintain focus and reduces decision fatigue',
+      'Regular breaks improve overall productivity and well-being'
+    );
+  }
+  
+  return insights;
+};
 
-const optimizationSuggestions = [
-  'Consider time-blocking similar activities for better focus',
-  'Your schedule could benefit from strategic buffer time',
-  'Grouping related tasks can improve your workflow efficiency',
-  'Adding transition time between different types of activities helps mental switching',
-  'Your peak energy hours deserve your most important tasks',
-  'Regular review sessions can help you stay on track with goals',
-  'Scheduling preparation time before important events reduces stress',
-  'Building in flexibility helps you adapt to unexpected changes'
-];
+const getPersonalizedOptimizationSuggestions = (preferences: UserPreferences): string[] => {
+  const suggestions = [];
+  
+  if (preferences.productivityHours && preferences.productivityHours.length > 0) {
+    suggestions.push(`Schedule your most important tasks during ${preferences.productivityHours.join(' or ')} for maximum efficiency`);
+  }
+  
+  if (preferences.focusAreas && preferences.focusAreas.includes('work-career')) {
+    suggestions.push('Group similar work tasks together to minimize context switching');
+  }
+  
+  if (preferences.focusAreas && preferences.focusAreas.includes('learning-education')) {
+    suggestions.push('Schedule study sessions when your energy is highest for better retention');
+  }
+  
+  if (preferences.dailyRoutines && preferences.dailyRoutines.includes('exercise')) {
+    suggestions.push('Plan workouts at consistent times to build a sustainable fitness habit');
+  }
+  
+  if (preferences.timeBlockSize && preferences.timeBlockSize < 60) {
+    suggestions.push('Consider longer time blocks for deep work to avoid frequent interruptions');
+  }
+  
+  // Add generic suggestions if no specific preferences
+  if (suggestions.length === 0) {
+    suggestions.push(
+      'Consider time-blocking similar activities for better focus',
+      'Add buffer time between different types of activities',
+      'Schedule preparation time before important events'
+    );
+  }
+  
+  return suggestions;
+};
 
 export function generatePersonalizedSuggestions(
   events: Event[],
@@ -154,7 +206,14 @@ export function generatePersonalizedSuggestions(
     const dayEvents = events.filter(e => e.date === targetDate);
     const busyTimes = dayEvents.map(e => e.startTime);
     
-    const availableTimes = preferredTimes.filter(time => 
+    // If user has productivity hours, prefer those times
+    const userPreferredTimes = productivityHours.length > 0 
+      ? productivityHours.filter(hour => preferredTimes.includes(hour))
+      : preferredTimes;
+    
+    const timesToCheck = userPreferredTimes.length > 0 ? userPreferredTimes : preferredTimes;
+    
+    const availableTimes = timesToCheck.filter(time => 
       !busyTimes.some(busyTime => Math.abs(
         parseInt(time.split(':')[0]) - parseInt(busyTime.split(':')[0])
       ) < 1)
@@ -165,7 +224,7 @@ export function generatePersonalizedSuggestions(
       : getRandomItem(preferredTimes, Math.floor(Math.random() * 100));
   };
 
-  // Generate suggestions based on focus areas with more variety
+  // Generate suggestions based on focus areas with personalization
   focusAreas.forEach((area, index) => {
     let categoryKey = '';
     let categoryId = '';
@@ -202,7 +261,13 @@ export function generatePersonalizedSuggestions(
       const title = getRandomItem(template.titles, index);
       const description = getRandomItem(template.descriptions, index);
       const duration = getRandomItem(template.durations, index);
-      const startTime = getAvailableTime(template.times, tomorrow);
+      
+      // Use user's productivity hours if available and relevant
+      const preferredTimes = (categoryKey === 'study' || categoryKey === 'work') && productivityHours.length > 0
+        ? productivityHours
+        : template.times;
+      
+      const startTime = getAvailableTime(preferredTimes, tomorrow);
       const endTime = addMinutesToTime(startTime, duration);
 
       // Vary the target date
@@ -213,7 +278,7 @@ export function generatePersonalizedSuggestions(
         id: `${categoryKey}-${sessionId}-${index}`,
         type: 'schedule',
         title: title,
-        description: `${description} - Perfect for your ${area.replace('-', ' & ')} goals`,
+        description: `${description} - Aligned with your ${area.replace('-', ' & ')} focus area${productivityHours.length > 0 && (categoryKey === 'study' || categoryKey === 'work') ? ' during your peak hours' : ''}`,
         action: JSON.stringify({
           type: 'create_event',
           event: {
@@ -232,89 +297,140 @@ export function generatePersonalizedSuggestions(
     }
   });
 
-  // Add routine-based suggestions with variety
-  if (dailyRoutines.includes('exercise')) {
-    const healthTemplate = suggestionTemplates.health[0];
-    const exerciseTitle = getRandomItem(healthTemplate.titles, sessionId % 7);
-    const exerciseDescription = getRandomItem(healthTemplate.descriptions, sessionId % 7);
-    const exerciseDuration = getRandomItem(healthTemplate.durations, sessionId % 5);
-    const exerciseTime = getAvailableTime(healthTemplate.times, tomorrow);
+  // Enhanced routine-based suggestions with user preferences
+  dailyRoutines.forEach((routine, index) => {
+    const routineTime = getCurrentTimeForRoutine(routine, preferences);
+    const routineDuration = getDurationForRoutine(routine);
+    
+    if (routine === 'exercise') {
+      const healthTemplate = suggestionTemplates.health[0];
+      const exerciseTitle = getRandomItem(healthTemplate.titles, sessionId % 7);
+      const exerciseDescription = getRandomItem(healthTemplate.descriptions, sessionId % 7);
+      
+      suggestions.push({
+        id: `routine-exercise-${sessionId}`,
+        type: 'schedule',
+        title: `Daily ${exerciseTitle}`,
+        description: `${exerciseDescription} - Part of your daily routine${routineTime ? ` at ${routineTime}` : ''}`,
+        action: JSON.stringify({
+          type: 'create_event',
+          event: {
+            title: exerciseTitle,
+            startTime: routineTime || '07:00',
+            endTime: addMinutesToTime(routineTime || '07:00', routineDuration),
+            date: tomorrow,
+            category: 'health',
+            priority: 'medium',
+            description: `${exerciseDescription}. Daily routine suggested by AI.`
+          }
+        }),
+        priority: 2,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    
+    if (routine === 'breakfast') {
+      suggestions.push({
+        id: `routine-breakfast-${sessionId}`,
+        type: 'schedule',
+        title: 'Mindful Breakfast',
+        description: 'Start your day with proper nutrition - part of your daily routine',
+        action: JSON.stringify({
+          type: 'create_event',
+          event: {
+            title: 'Breakfast',
+            startTime: '08:00',
+            endTime: '08:30',
+            date: tomorrow,
+            category: 'meal',
+            priority: 'medium',
+            description: 'Daily breakfast routine suggested by AI.'
+          }
+        }),
+        priority: 2,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    
+    if (routine === 'lunch') {
+      suggestions.push({
+        id: `routine-lunch-${sessionId}`,
+        type: 'schedule',
+        title: 'Lunch Break',
+        description: 'Fuel your afternoon with healthy food - part of your daily routine',
+        action: JSON.stringify({
+          type: 'create_event',
+          event: {
+            title: 'Lunch',
+            startTime: '12:30',
+            endTime: '13:00',
+            date: tomorrow,
+            category: 'meal',
+            priority: 'medium',
+            description: 'Daily lunch routine suggested by AI.'
+          }
+        }),
+        priority: 2,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  });
 
-    suggestions.push({
-      id: `routine-exercise-${sessionId}`,
-      type: 'schedule',
-      title: `Daily ${exerciseTitle}`,
-      description: `${exerciseDescription} - Part of your daily routine`,
-      action: JSON.stringify({
-        type: 'create_event',
-        event: {
-          title: exerciseTitle,
-          startTime: exerciseTime,
-          endTime: addMinutesToTime(exerciseTime, exerciseDuration),
-          date: tomorrow,
-          category: 'health',
-          priority: 'medium',
-          description: `${exerciseDescription}. Daily routine suggested by AI.`
-        }
-      }),
-      priority: 2,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  // Add productivity insights
+  // Add personalized productivity insights
   const completedEvents = events.filter(e => e.isCompleted);
   if (completedEvents.length > 3) {
-    const insight = getRandomItem(productivityInsights, sessionId % 10);
+    const personalizedInsights = getPersonalizedProductivityInsights(preferences);
+    const insight = getRandomItem(personalizedInsights, sessionId % 10);
+    
     suggestions.push({
       id: `productivity-insight-${sessionId}`,
       type: 'optimize',
-      title: 'Productivity Insight',
+      title: 'Personalized Productivity Insight',
       description: insight,
       action: JSON.stringify({
         type: 'productivity_insight',
-        data: analyzeProductivityPatterns(events)
+        data: analyzeProductivityPatterns(events, preferences)
       }),
       priority: 2,
       createdAt: new Date().toISOString(),
     });
   }
 
-  // Add optimization suggestions
+  // Add personalized optimization suggestions
   const busyHours = getBusyHours(events, today);
   if (busyHours.length > 4) {
-    const optimization = getRandomItem(optimizationSuggestions, sessionId % 8);
+    const personalizedOptimizations = getPersonalizedOptimizationSuggestions(preferences);
+    const optimization = getRandomItem(personalizedOptimizations, sessionId % 8);
+    
     suggestions.push({
       id: `optimize-schedule-${sessionId}`,
       type: 'optimize',
-      title: 'Schedule Optimization',
+      title: 'Personalized Schedule Optimization',
       description: optimization,
       action: JSON.stringify({
         type: 'optimize_schedule',
-        suggestion: optimization
+        suggestion: optimization,
+        userPreferences: preferences
       }),
       priority: 1,
       createdAt: new Date().toISOString(),
     });
   }
 
-  // Add break suggestions with variety
+  // Enhanced break suggestions based on user preferences
   const intensiveEvents = events.filter(e => 
     (e.category.name === 'Study' || e.category.name === 'Work') && 
     e.date === today
   ).sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   if (intensiveEvents.length >= 2) {
-    const breakActivities = [
-      'Mindful Break', 'Stretch Break', 'Fresh Air Break', 'Hydration Break', 
-      'Eye Rest Break', 'Movement Break', 'Breathing Break', 'Mental Reset'
-    ];
-    const breakDescriptions = [
-      'Take a moment for mindfulness', 'Stretch and release tension', 
-      'Step outside for fresh air', 'Stay hydrated and refreshed',
-      'Rest your eyes and mind', 'Get your body moving', 
-      'Practice deep breathing', 'Clear your mind and refocus'
-    ];
+    const breakActivities = preferences.focusAreas?.includes('health-fitness')
+      ? ['Movement Break', 'Stretch Break', 'Breathing Break', 'Eye Rest Break']
+      : ['Mindful Break', 'Fresh Air Break', 'Hydration Break', 'Mental Reset'];
+      
+    const breakDescriptions = preferences.focusAreas?.includes('health-fitness')
+      ? ['Get your body moving', 'Stretch and release tension', 'Practice deep breathing', 'Rest your eyes and mind']
+      : ['Take a moment for mindfulness', 'Step outside for fresh air', 'Stay hydrated and refreshed', 'Clear your mind and refocus'];
 
     for (let i = 0; i < Math.min(intensiveEvents.length - 1, 2); i++) {
       const current = intensiveEvents[i];
@@ -328,7 +444,7 @@ export function generatePersonalizedSuggestions(
           id: `break-between-${sessionId}-${i}`,
           type: 'break',
           title: `Add ${breakTitle}`,
-          description: `${breakDescription} between "${current.title}" and "${next.title}"`,
+          description: `${breakDescription} between "${current.title}" and "${next.title}"${preferences.focusAreas?.includes('health-fitness') ? ' - supports your health focus' : ''}`,
           action: JSON.stringify({
             type: 'create_event',
             event: {
@@ -338,7 +454,7 @@ export function generatePersonalizedSuggestions(
               date: current.date,
               category: 'personal',
               priority: 'low',
-              description: `${breakDescription}. Suggested break by AI.`
+              description: `${breakDescription}. Suggested break by AI based on your preferences.`
             }
           }),
           priority: 2,
@@ -349,93 +465,93 @@ export function generatePersonalizedSuggestions(
     }
   }
 
-  // Add meal suggestions if user has meal routines
-  if (dailyRoutines.includes('breakfast') || dailyRoutines.includes('lunch') || dailyRoutines.includes('dinner')) {
-    const mealTemplate = suggestionTemplates.meal[0];
-    const mealTitle = getRandomItem(mealTemplate.titles, sessionId % 10);
-    const mealDescription = getRandomItem(mealTemplate.descriptions, sessionId % 10);
-    const mealTime = getRandomItem(['08:00', '12:30', '18:30'], sessionId % 3);
+  // Goals-based suggestions
+  if (preferences.goals && preferences.goals.trim()) {
+    const goalKeywords = preferences.goals.toLowerCase();
+    let goalSuggestion = null;
     
-    suggestions.push({
-      id: `meal-suggestion-${sessionId}`,
-      type: 'schedule',
-      title: mealTitle,
-      description: `${mealDescription} - Supporting your nutrition routine`,
-      action: JSON.stringify({
-        type: 'create_event',
-        event: {
-          title: mealTitle,
-          startTime: mealTime,
-          endTime: addMinutesToTime(mealTime, 30),
-          date: tomorrow,
-          category: 'meal',
-          priority: 'medium',
-          description: `${mealDescription}. Meal routine suggested by AI.`
-        }
-      }),
-      priority: 3,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  // Add creative/variety suggestions
-  const creativeSuggestions = [
-    {
-      title: 'Creative Exploration',
-      description: 'Try something new and creative today',
-      category: 'personal',
-      duration: 45
-    },
-    {
-      title: 'Learning Adventure',
-      description: 'Explore a topic that interests you',
-      category: 'study',
-      duration: 60
-    },
-    {
-      title: 'Social Connection',
-      description: 'Reach out to someone important to you',
-      category: 'social',
-      duration: 30
-    },
-    {
-      title: 'Wellness Check',
-      description: 'Take time to assess and improve your well-being',
-      category: 'health',
-      duration: 30
+    if (goalKeywords.includes('learn') || goalKeywords.includes('skill') || goalKeywords.includes('study')) {
+      goalSuggestion = {
+        title: 'Goal-Focused Learning Session',
+        description: 'Work towards your learning goals with dedicated study time',
+        category: 'study',
+        duration: 90
+      };
+    } else if (goalKeywords.includes('health') || goalKeywords.includes('fit') || goalKeywords.includes('exercise')) {
+      goalSuggestion = {
+        title: 'Goal-Focused Wellness Time',
+        description: 'Take action towards your health and fitness goals',
+        category: 'health',
+        duration: 45
+      };
+    } else if (goalKeywords.includes('work') || goalKeywords.includes('career') || goalKeywords.includes('professional')) {
+      goalSuggestion = {
+        title: 'Goal-Focused Career Development',
+        description: 'Advance your professional goals with focused work time',
+        category: 'work',
+        duration: 60
+      };
     }
-  ];
-
-  const creativeSuggestion = getRandomItem(creativeSuggestions, sessionId % 4);
-  const creativeTime = getAvailableTime(['10:00', '14:00', '16:00', '19:00'], tomorrow);
-  
-  suggestions.push({
-    id: `creative-${sessionId}`,
-    type: 'schedule',
-    title: creativeSuggestion.title,
-    description: creativeSuggestion.description,
-    action: JSON.stringify({
-      type: 'create_event',
-      event: {
-        title: creativeSuggestion.title,
-        startTime: creativeTime,
-        endTime: addMinutesToTime(creativeTime, creativeSuggestion.duration),
-        date: tomorrow,
-        category: creativeSuggestion.category,
-        priority: 'medium',
-        description: `${creativeSuggestion.description}. Creative suggestion by AI.`
-      }
-    }),
-    priority: 3,
-    createdAt: new Date().toISOString(),
-  });
+    
+    if (goalSuggestion) {
+      const goalTime = getAvailableTime(productivityHours.length > 0 ? productivityHours : ['10:00', '14:00', '16:00'], tomorrow);
+      
+      suggestions.push({
+        id: `goal-focused-${sessionId}`,
+        type: 'schedule',
+        title: goalSuggestion.title,
+        description: `${goalSuggestion.description} - aligned with your goals: "${preferences.goals.substring(0, 50)}${preferences.goals.length > 50 ? '...' : ''}"`,
+        action: JSON.stringify({
+          type: 'create_event',
+          event: {
+            title: goalSuggestion.title,
+            startTime: goalTime,
+            endTime: addMinutesToTime(goalTime, goalSuggestion.duration),
+            date: tomorrow,
+            category: goalSuggestion.category,
+            priority: 'high',
+            description: `${goalSuggestion.description}. Goal-focused suggestion by AI.`
+          }
+        }),
+        priority: 1,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
 
   // Shuffle and return limited suggestions to ensure variety
   const shuffledSuggestions = suggestions.sort(() => Math.random() - 0.5);
   return shuffledSuggestions.slice(0, 4);
 }
 
-// Natural Language Processing for Event Creation
+// Helper functions for routine timing
+function getCurrentTimeForRoutine(routine: string, preferences: UserPreferences): string | null {
+  // Use working hours if available for work-related routines
+  if (routine === 'commute' && preferences.workingHours) {
+    return preferences.workingHours.start;
+  }
+  
+  // Use productivity hours for exercise if user prefers morning workouts
+  if (routine === 'exercise' && preferences.productivityHours?.includes('early-morning')) {
+    return '07:00';
+  }
+  
+  return null; // Let the system choose optimal time
+}
+
+function getDurationForRoutine(routine: string): number {
+  const durations: { [key: string]: number } = {
+    'breakfast': 30,
+    'lunch': 30,
+    'dinner': 45,
+    'exercise': 45,
+    'commute': 30
+  };
+  
+  return durations[routine] || 30;
+}
+
+// Natural Language Processing for Event Creation with enhanced personalization
 export function parseEventFromMessage(message: string, userPreferences: UserPreferences): Event | null {
   const lowerMessage = message.toLowerCase();
   
@@ -449,7 +565,7 @@ export function parseEventFromMessage(message: string, userPreferences: UserPref
   const hasEventKeyword = eventKeywords.some(keyword => lowerMessage.includes(keyword));
   if (!hasEventKeyword) return null;
 
-  // Extract event details
+  // Extract event details with user preferences
   const eventDetails = extractEventDetails(message, userPreferences);
   if (!eventDetails.title) return null;
 
@@ -473,10 +589,10 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
   const today = new Date();
   const tomorrow = addDays(today, 1);
   
-  // Default values
+  // Default values based on user preferences
   let title = '';
-  let startTime = '09:00';
-  let endTime = '10:00';
+  let startTime = userPreferences.productivityHours?.[0] || '09:00';
+  let endTime = addMinutesToTime(startTime, 60);
   let date = format(today, 'yyyy-MM-dd');
   let category = eventCategories[2]; // Default to personal
   let priority: 'low' | 'medium' | 'high' = 'medium';
@@ -490,15 +606,19 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
     .replace(/\s+(daily|every day|recurring)\s*/i, '')
     .trim();
 
-  // If title is still empty or too generic, create a default
+  // If title is still empty or too generic, create a default based on user preferences
   if (!title || title.length < 3) {
     if (message.includes('meeting')) title = 'Meeting';
-    else if (message.includes('workout') || message.includes('exercise')) title = 'Workout';
-    else if (message.includes('lunch')) title = 'Lunch';
+    else if (message.includes('workout') || message.includes('exercise')) {
+      title = userPreferences.focusAreas?.includes('health-fitness') ? 'Fitness Session' : 'Workout';
+    }
+    else if (message.includes('lunch')) title = 'Lunch Break';
     else if (message.includes('dinner')) title = 'Dinner';
     else if (message.includes('break')) title = 'Break';
     else if (message.includes('call')) title = 'Phone Call';
-    else if (message.includes('study')) title = 'Study Session';
+    else if (message.includes('study')) {
+      title = userPreferences.focusAreas?.includes('learning-education') ? 'Learning Session' : 'Study Session';
+    }
     else title = 'New Event';
   }
 
@@ -514,6 +634,11 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
     if (period === 'am' && hours === 12) hours = 0;
 
     startTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  } else {
+    // Use user's productivity hours for work/study events
+    if ((message.includes('work') || message.includes('study')) && userPreferences.productivityHours?.length > 0) {
+      startTime = userPreferences.productivityHours[0];
+    }
   }
 
   // Extract duration
@@ -532,11 +657,20 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
     
     endTime = addMinutesToTime(startTime, durationMinutes);
   } else {
-    // Default durations based on event type
+    // Default durations based on event type and user preferences
     if (title.toLowerCase().includes('meeting')) endTime = addMinutesToTime(startTime, 60);
-    else if (title.toLowerCase().includes('workout')) endTime = addMinutesToTime(startTime, 45);
-    else if (title.toLowerCase().includes('lunch') || title.toLowerCase().includes('dinner')) endTime = addMinutesToTime(startTime, 30);
+    else if (title.toLowerCase().includes('workout')) {
+      const duration = userPreferences.focusAreas?.includes('health-fitness') ? 60 : 45;
+      endTime = addMinutesToTime(startTime, duration);
+    }
+    else if (title.toLowerCase().includes('lunch') || title.toLowerCase().includes('dinner')) {
+      endTime = addMinutesToTime(startTime, 30);
+    }
     else if (title.toLowerCase().includes('break')) endTime = addMinutesToTime(startTime, 15);
+    else if (title.toLowerCase().includes('study')) {
+      const duration = userPreferences.focusAreas?.includes('learning-education') ? 90 : 60;
+      endTime = addMinutesToTime(startTime, duration);
+    }
     else endTime = addMinutesToTime(startTime, 60);
   }
 
@@ -553,7 +687,7 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
     // Could extend for specific days of week
   }
 
-  // Determine category based on keywords
+  // Determine category based on keywords and user preferences
   if (message.includes('workout') || message.includes('exercise') || message.includes('gym')) {
     category = eventCategories.find(c => c.id === 'health') || eventCategories[3];
   } else if (message.includes('study') || message.includes('learn') || message.includes('class')) {
@@ -571,15 +705,23 @@ function extractEventDetails(message: string, userPreferences: UserPreferences) 
     isRecurring = true;
   }
 
-  // Determine priority
+  // Determine priority based on user preferences and keywords
   if (message.includes('important') || message.includes('urgent') || message.includes('critical')) {
     priority = 'high';
   } else if (message.includes('optional') || message.includes('if possible') || message.includes('maybe')) {
     priority = 'low';
+  } else {
+    // Set priority based on user's focus areas
+    if (userPreferences.focusAreas?.includes(category.id.replace('health', 'health-fitness').replace('study', 'learning-education').replace('work', 'work-career'))) {
+      priority = 'high';
+    }
   }
 
-  // Create description
+  // Create personalized description
   description = `Created by AI assistant from: "${message}"`;
+  if (userPreferences.focusAreas?.length > 0) {
+    description += ` - Aligned with your focus areas: ${userPreferences.focusAreas.join(', ')}`;
+  }
 
   return {
     title,
@@ -600,7 +742,22 @@ export function generateAIResponse(message: string, userPreferences: UserPrefere
   if (lowerMessage.includes('schedule') && (lowerMessage.includes('today') || lowerMessage.includes('what'))) {
     const todayEvents = events.filter(e => e.date === format(new Date(), 'yyyy-MM-dd'));
     if (todayEvents.length === 0) {
-      return "You have a free day today! Would you like me to suggest some activities based on your focus areas?";
+      const suggestions = [];
+      if (userPreferences.dailyRoutines?.includes('exercise')) {
+        suggestions.push('a workout session');
+      }
+      if (userPreferences.focusAreas?.includes('learning-education')) {
+        suggestions.push('some study time');
+      }
+      if (userPreferences.focusAreas?.includes('work-career')) {
+        suggestions.push('focused work time');
+      }
+      
+      const suggestionText = suggestions.length > 0 
+        ? ` Would you like me to suggest ${suggestions.slice(0, 2).join(' or ')} based on your preferences?`
+        : ' Would you like me to suggest some activities based on your focus areas?';
+        
+      return `You have a free day today!${suggestionText}`;
     } else {
       const eventList = todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ');
       return `Here's your schedule for today: ${eventList}. Is there anything you'd like to add or change?`;
@@ -610,21 +767,39 @@ export function generateAIResponse(message: string, userPreferences: UserPrefere
   // Check if user is asking for suggestions
   if (lowerMessage.includes('suggest') || lowerMessage.includes('recommend') || lowerMessage.includes('what should')) {
     const focusAreas = userPreferences.focusAreas || [];
-    if (focusAreas.length > 0) {
-      return `Based on your focus areas (${focusAreas.join(', ')}), I can suggest some activities. Would you like me to add a study session, workout, or work block to your calendar?`;
+    const dailyRoutines = userPreferences.dailyRoutines || [];
+    
+    if (focusAreas.length > 0 || dailyRoutines.length > 0) {
+      const suggestions = [];
+      
+      if (focusAreas.includes('learning-education')) suggestions.push('a study session');
+      if (focusAreas.includes('health-fitness') || dailyRoutines.includes('exercise')) suggestions.push('a workout');
+      if (focusAreas.includes('work-career')) suggestions.push('focused work time');
+      if (dailyRoutines.includes('lunch')) suggestions.push('your lunch break');
+      
+      const suggestionText = suggestions.length > 0 
+        ? suggestions.slice(0, 3).join(', ')
+        : 'some activities';
+        
+      return `Based on your preferences (${[...focusAreas, ...dailyRoutines].join(', ')}), I can suggest ${suggestionText}. What would you like me to schedule?`;
     } else {
       return "I'd be happy to suggest some activities! What are you in the mood for - something productive, relaxing, or health-focused?";
     }
   }
 
-  // Default response for event creation
-  return "I understand you'd like to schedule something. I've analyzed your request and will add it to your calendar with the optimal timing based on your preferences!";
+  // Default response for event creation with personalization
+  const personalizedResponse = userPreferences.focusAreas?.length > 0 
+    ? ` I'll optimize the timing based on your focus areas (${userPreferences.focusAreas.slice(0, 2).join(', ')}) and preferences!`
+    : ' I\'ll find the optimal timing based on your preferences!';
+    
+  return `I understand you'd like to schedule something. I've analyzed your request and will add it to your calendar with${personalizedResponse}`;
 }
 
 function getOptimalTimeForActivity(
   activity: string, 
   productivityHours: string[], 
-  workingHours: { start: string; end: string }
+  workingHours: { start: string; end: string },
+  userPreferences: UserPreferences
 ): string {
   // Default times based on activity type
   const defaultTimes = {
@@ -636,17 +811,20 @@ function getOptimalTimeForActivity(
     break: '15:00'
   };
 
-  // If user has productivity hours, try to use them
-  if (productivityHours.length > 0) {
-    const firstProductiveHour = productivityHours[0];
-    if (firstProductiveHour && firstProductiveHour.includes(':')) {
-      return firstProductiveHour;
-    }
+  // If user has productivity hours, try to use them for work/study activities
+  if (productivityHours.length > 0 && (activity === 'work' || activity === 'study')) {
+    return productivityHours[0];
   }
 
-  // Use working hours if available
-  if (activity === 'work' || activity === 'study') {
-    return workingHours.start || defaultTimes[activity as keyof typeof defaultTimes];
+  // Use working hours if available for work activities
+  if (activity === 'work' && workingHours.start) {
+    return workingHours.start;
+  }
+
+  // Consider user's daily routines for timing
+  if (activity === 'exercise' && userPreferences.dailyRoutines?.includes('exercise')) {
+    // If user has exercise routine, suggest morning time
+    return '07:00';
   }
 
   return defaultTimes[activity as keyof typeof defaultTimes] || '09:00';
@@ -682,12 +860,12 @@ function getTimeDifference(time1: string, time2: string): number {
   }
 }
 
-export function getMotivationalMessage(eventTitle: string, eventCategory: string): string {
+export function getMotivationalMessage(eventTitle: string, eventCategory: string, userPreferences?: UserPreferences): string {
   const messages = {
     Study: [
-      `🎓 Outstanding work completing "${eventTitle}"! Your dedication is paying off.`,
+      `🎓 Outstanding work completing "${eventTitle}"! Your dedication to learning is paying off.`,
       `📚 Great job finishing "${eventTitle}"! You're building excellent study habits.`,
-      `🌟 Excellent! "${eventTitle}" is done. Your consistency is impressive!`,
+      `🌟 Excellent! "${eventTitle}" is done. Your consistency in learning is impressive!`,
     ],
     Work: [
       `💼 Fantastic work on "${eventTitle}"! You're being incredibly productive.`,
@@ -707,17 +885,30 @@ export function getMotivationalMessage(eventTitle: string, eventCategory: string
   };
 
   const categoryMessages = messages[eventCategory as keyof typeof messages] || messages.Personal;
-  return categoryMessages[Math.floor(Math.random() * categoryMessages.length)];
+  let message = categoryMessages[Math.floor(Math.random() * categoryMessages.length)];
+  
+  // Add personalized encouragement based on user preferences
+  if (userPreferences?.focusAreas?.includes('health-fitness') && eventCategory === 'Health') {
+    message += ' Your focus on health and fitness is really showing!';
+  } else if (userPreferences?.focusAreas?.includes('learning-education') && eventCategory === 'Study') {
+    message += ' Your commitment to learning aligns perfectly with your goals!';
+  } else if (userPreferences?.focusAreas?.includes('work-career') && eventCategory === 'Work') {
+    message += ' This dedication to your career will pay dividends!';
+  }
+  
+  return message;
 }
 
-export function analyzeProductivityPatterns(events: Event[]): {
+export function analyzeProductivityPatterns(events: Event[], userPreferences?: UserPreferences): {
   mostProductiveHours: string[];
   leastProductiveHours: string[];
   averageTaskDuration: number;
+  alignmentWithPreferences: number;
 } {
   const completedEvents = events.filter(e => e.isCompleted);
   const hourCounts: { [hour: string]: number } = {};
   let totalDuration = 0;
+  let alignmentScore = 0;
 
   completedEvents.forEach(event => {
     const hour = event.startTime.slice(0, 2);
@@ -728,13 +919,32 @@ export function analyzeProductivityPatterns(events: Event[]): {
     const [endHour, endMin] = event.endTime.split(':').map(Number);
     const duration = (endHour * 60 + endMin) - (startHour * 60 + startMin);
     totalDuration += duration;
+    
+    // Calculate alignment with user preferences
+    if (userPreferences) {
+      if (userPreferences.productivityHours?.includes(`${hour}:00`)) {
+        alignmentScore += 2; // High alignment
+      }
+      if (userPreferences.focusAreas?.some(area => {
+        const categoryMap: { [key: string]: string } = {
+          'health-fitness': 'health',
+          'learning-education': 'study',
+          'work-career': 'work'
+        };
+        return categoryMap[area] === event.category.id;
+      })) {
+        alignmentScore += 1; // Focus area alignment
+      }
+    }
   });
 
   const sortedHours = Object.entries(hourCounts).sort((a, b) => b[1] - a[1]);
+  const maxAlignment = completedEvents.length * 3; // Maximum possible alignment score
   
   return {
     mostProductiveHours: sortedHours.slice(0, 3).map(([hour]) => `${hour}:00`),
     leastProductiveHours: sortedHours.slice(-3).map(([hour]) => `${hour}:00`),
     averageTaskDuration: completedEvents.length > 0 ? Math.round(totalDuration / completedEvents.length) : 0,
+    alignmentWithPreferences: maxAlignment > 0 ? Math.round((alignmentScore / maxAlignment) * 100) : 0,
   };
 }

@@ -155,7 +155,7 @@ class ComposioService {
   }
 
   /**
-   * Send message to AI with user-specific Composio tools and conversation context
+   * Send message to AI with user-specific Composio tools and enhanced conversation context
    */
   async sendMessage(
     message: string,
@@ -173,6 +173,7 @@ class ComposioService {
         messageCount: number;
         totalMessages: number;
         userEmail: string;
+        userName?: string;
         timestamp: string;
       };
     }
@@ -187,16 +188,30 @@ class ComposioService {
 
     console.log(`💬 Sending AI message for user ${userEmail}: "${message}"`);
     console.log(`📝 Conversation context: ${context?.conversationHistory?.length || 0} messages`);
+    console.log(`🎯 User preferences:`, context?.preferences);
+
+    // Enhanced context with user preferences and conversation history
+    const enhancedContext = {
+      ...context,
+      currentDate: context?.currentDate?.toISOString(),
+      // Add user preference insights for the AI
+      userInsights: context?.preferences ? {
+        hasProductivityHours: !!(context.preferences.productivityHours?.length),
+        hasFocusAreas: !!(context.preferences.focusAreas?.length),
+        hasDailyRoutines: !!(context.preferences.dailyRoutines?.length),
+        hasGoals: !!(context.preferences.goals?.trim()),
+        workingHours: context.preferences.workingHours,
+        preferredTimeBlocks: context.preferences.timeBlockSize || 60,
+        motivationalFeedbackEnabled: context.preferences.motivationalFeedback
+      } : null
+    };
 
     return this.makeRequest('/api/ai/send-message', {
       method: 'POST',
       body: JSON.stringify({ 
         message, 
         userEmail,
-        context: {
-          ...context,
-          currentDate: context?.currentDate?.toISOString(),
-        }
+        context: enhancedContext
       }),
     });
   }
