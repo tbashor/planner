@@ -243,15 +243,95 @@ export default function ToastCalendar() {
   };
 
   // Event handlers
-  const onBeforeCreateEvent = (eventData: any) => {
+  const onBeforeCreateEvent = async (eventData: any) => {
     const startDate = new Date(eventData.start);
-    setEventDialog({
-      isOpen: true,
-      mode: 'create',
-      event: null,
-      initialDate: format(startDate, 'yyyy-MM-dd'),
-      initialTime: format(startDate, 'HH:mm'),
-    });
+    
+    // Create the event object
+    const newEvent: Event = {
+      id: `event_${Date.now()}`,
+      title: eventData.title || 'New Event',
+      startTime: format(startDate, 'HH:mm'),
+      endTime: format(new Date(eventData.end), 'HH:mm'),
+      date: format(startDate, 'yyyy-MM-dd'),
+      category: {
+        id: 'general',
+        name: 'General',
+        color: '#3B82F6',
+        icon: 'Calendar',
+      },
+      priority: 'medium',
+      description: '',
+      isCompleted: false,
+      isStatic: false,
+      color: '#3B82F6',
+    };
+
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        console.log('📝 Creating event via Composio from calendar click:', newEvent.title);
+        
+        const response = await composioService.createCalendarEvent(userEmail, {
+          title: newEvent.title,
+          description: newEvent.description,
+          startTime: `${newEvent.date}T${newEvent.startTime}:00`,
+          endTime: `${newEvent.date}T${newEvent.endTime}:00`,
+        });
+
+        if (response.success) {
+          console.log('✅ Event created successfully via Composio');
+          
+          // Add to local state
+          const updatedEvents = [...state.events, newEvent];
+          setEventsHistory(updatedEvents);
+          
+          // Refresh calendar data
+          await fetchCurrentWeek();
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `📅 Perfect! I've created "${newEvent.title}" and synced it with your Google Calendar. Click on the event to edit details.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } else {
+          throw new Error(response.error || 'Failed to create event');
+        }
+      } else {
+        // Handle local events for non-authenticated users
+        const updatedEvents = [...state.events, newEvent];
+        setEventsHistory(updatedEvents);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `📅 I've created "${newEvent.title}" in your local calendar. Connect Google Calendar to sync events across devices.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      
+      // Still add to local state as fallback
+      const updatedEvents = [...state.events, newEvent];
+      setEventsHistory(updatedEvents);
+      
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `📅 I've created "${newEvent.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
   };
 
   const onBeforeUpdateEvent = async (updateData: any) => {
