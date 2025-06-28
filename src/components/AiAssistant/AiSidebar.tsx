@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, RefreshCw, ExternalLink } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
@@ -37,8 +37,8 @@ export default function AiSidebar() {
   const [isSettingUpConnection, setIsSettingUpConnection] = useState(false);
   const [setupRedirectUrl, setSetupRedirectUrl] = useState<string | null>(null);
 
-  // Helper function to validate if an email is real (not a fallback)
-  const isValidRealEmail = (email: string): boolean => {
+  // Helper function to validate if an email is real (not a fallback) - memoized to prevent excessive calls
+  const isValidRealEmail = useCallback((email: string): boolean => {
     if (!email || typeof email !== 'string') return false;
     
     // Check for common fallback patterns
@@ -71,25 +71,18 @@ export default function AiSidebar() {
     if (invalidDomains.includes(domain)) return false;
 
     return true;
-  };
+  }, []);
 
-  // Get the authenticated user email from the app state
-  const getAuthenticatedUserEmail = (): string | null => {
+  // Get the authenticated user email from the app state - memoized to prevent excessive calls
+  const getAuthenticatedUserEmail = useMemo((): string | null => {
     if (state.user?.email && isValidRealEmail(state.user.email)) {
-      console.log('🔍 Found valid authenticated user email:', state.user.email);
       return state.user.email;
     }
-
-    console.warn('⚠️ No valid authenticated user email found. Email:', state.user?.email);
     return null;
-  };
+  }, [state.user?.email, isValidRealEmail]);
 
-  // Check server availability and connections
-  useEffect(() => {
-    checkServerAndConnections();
-  }, [state.user?.email]);
-
-  const checkServerAndConnections = async () => {
+  // Check server availability and connections - debounced to prevent excessive calls
+  const checkServerAndConnections = useCallback(async () => {
     try {
       // Check server availability
       const available = await composioService.isServerAvailable();
@@ -106,7 +99,7 @@ export default function AiSidebar() {
       }
 
       // Get authenticated user email
-      const userEmail = getAuthenticatedUserEmail();
+      const userEmail = getAuthenticatedUserEmail;
       if (!userEmail) {
         setIsComposioConnected(false);
         setComposioConnectionError('Advanced AI agent features require email verification. Basic calendar features are available.');
@@ -147,10 +140,17 @@ export default function AiSidebar() {
       setComposioConnectionError('Failed to check AI agent connection');
       console.error('❌ Error checking AI agent connection:', error);
     }
-  };
+  }, [getAuthenticatedUserEmail]);
+
+  // Only check connections when user email changes, not on every render
+  useEffect(() => {
+    if (getAuthenticatedUserEmail) {
+      checkServerAndConnections();
+    }
+  }, [getAuthenticatedUserEmail, checkServerAndConnections]);
 
   const handleSetupConnection = async () => {
-    const userEmail = getAuthenticatedUserEmail();
+    const userEmail = getAuthenticatedUserEmail;
     if (!userEmail) {
       setComposioConnectionError('Email verification required for AI agent features');
       return;
@@ -219,7 +219,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
       // Start polling to check if connection is complete
       const pollInterval = setInterval(async () => {
         try {
-          const userEmail = getAuthenticatedUserEmail();
+          const userEmail = getAuthenticatedUserEmail;
           if (userEmail) {
             const testResult = await composioService.testUserConnection(userEmail);
             if (testResult.success && testResult.testResult) {
@@ -257,7 +257,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
     if (!chatInput.trim()) return;
 
     const userMessage = chatInput.trim();
-    const userEmail = getAuthenticatedUserEmail();
+    const userEmail = getAuthenticatedUserEmail;
 
     if (!userEmail) {
       dispatch({
@@ -386,7 +386,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
   };
 
   const handleTestConnection = async () => {
-    const userEmail = getAuthenticatedUserEmail();
+    const userEmail = getAuthenticatedUserEmail;
     if (!userEmail) {
       setComposioConnectionError('Email verification required for AI agent features');
       return;
@@ -438,7 +438,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
     }
   };
 
-  const displayUserEmail = getAuthenticatedUserEmail();
+  const displayUserEmail = getAuthenticatedUserEmail;
   const hasValidEmail = !!displayUserEmail;
 
   return (
