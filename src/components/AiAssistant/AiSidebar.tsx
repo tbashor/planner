@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, ExternalLink } from 'lucide-react';
+import { Send, Mic, Brain, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Zap, ExternalLink, MessageSquare, User } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
-import AiSuggestionCard from './AiSuggestionCard';
 import composioService, { ComposioTestResponse } from '../../services/composioService';
-
 
 // Extend Window interface for webkit speech recognition
 declare global {
@@ -25,7 +23,6 @@ export default function AiSidebar() {
   const { authState } = useAuth();
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingMessage, setIsProcessingMessage] = useState(false);
   const [isComposioConnected, setIsComposioConnected] = useState(false);
   const [composioConnectionError, setComposioConnectionError] = useState<string | null>(null);
@@ -616,67 +613,82 @@ export default function AiSidebar() {
   const hasValidEmail = !!displayUserEmail;
 
   return (
-    <div className={`w-80 h-full border-r flex flex-col ${
+    <div className={`h-full flex flex-col ${
       state.isDarkMode 
-        ? 'bg-gray-900 border-gray-700' 
-        : 'bg-gray-50 border-gray-200'
+        ? 'bg-gray-900' 
+        : 'bg-white'
     }`}>
-      {/* Header */}
+      {/* Chat Header */}
       <div className={`p-4 border-b flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-blue-600 rounded-full flex items-center justify-center">
-              <Brain className="h-4 w-4 text-white" />
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+              <MessageSquare className="h-5 w-5 text-white" />
             </div>
-            <h2 className={`font-semibold ${
-              state.isDarkMode ? 'text-white' : 'text-gray-900'
-            }`}>
-              AI Calendar Agent
-            </h2>
+            <div>
+              <h2 className={`font-semibold ${
+                state.isDarkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                AI Assistant
+              </h2>
+              <div className="flex items-center space-x-2">
+                {isComposioConnected && hasValidEmail ? (
+                  <>
+                    <CheckCircle className="w-3 h-3 text-green-400" />
+                    <span className={`text-xs ${
+                      state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+                    }`}>
+                      Active
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-red-400" />
+                    <span className={`text-xs ${
+                      state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                    }`}>
+                      {hasValidEmail ? 'Setup Needed' : 'Limited'}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="flex items-center space-x-1">
-            {isComposioConnected && hasValidEmail ? (
-              <>
-                <CheckCircle className="w-3 h-3 text-green-400" />
-                <span className={`text-xs ${
-                  state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                }`}>
-                  Active
-                </span>
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-3 h-3 text-red-400" />
-                <span className={`text-xs ${
-                  state.isDarkMode ? 'text-red-400' : 'text-red-600'
-                }`}>
-                  {hasValidEmail ? 'Setup Needed' : 'Limited'}
-                </span>
-              </>
-            )}
-          </div>
+          
+          <button
+            onClick={() => setShowComposioSettings(!showComposioSettings)}
+            className={`p-2 rounded-lg transition-colors ${
+              state.isDarkMode
+                ? 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+          >
+            <Settings className="h-4 w-4" />
+          </button>
         </div>
         
         {/* User Info */}
         {state.user?.email && (
-          <div className={`mt-2 text-xs ${
+          <div className={`mt-3 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <div className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
-              User: {state.user.email}
+            <div className="flex items-center space-x-2">
+              <User className="h-3 w-3" />
+              <span className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
+                {state.user.email}
+              </span>
             </div>
-            <div>Agent Status: {connectionStatus}</div>
             <div className="flex items-center space-x-2 mt-1">
               <Calendar className="h-3 w-3" />
               <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
               {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
             </div>
             {hasValidEmail ? (
-              <div className="text-green-500 mt-1">✓ Email verified - AI agent ready for setup</div>
+              <div className="text-green-500 mt-1">✓ Email verified - AI agent ready</div>
             ) : (
-              <div className="text-orange-500 mt-1">⚠️ Email verification needed for AI agent</div>
+              <div className="text-orange-500 mt-1">⚠️ Email verification needed</div>
             )}
             {isComposioConnected && hasValidEmail && (
               <div className="text-purple-500 mt-1">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
@@ -743,6 +755,51 @@ export default function AiSidebar() {
             </div>
           </div>
         )}
+
+        {/* Settings Panel */}
+        {showComposioSettings && (
+          <div className={`mt-3 p-3 rounded-lg border ${
+            state.isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-200 bg-gray-50'
+          }`}>
+            <div className="space-y-2">
+              {/* Setup Connection Button */}
+              {state.user?.email && hasValidEmail && !isComposioConnected && (
+                <button
+                  onClick={handleSetupConnection}
+                  disabled={isSettingUpConnection || !serverAvailable}
+                  className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                    isSettingUpConnection || !serverAvailable
+                      ? 'opacity-50 cursor-not-allowed'
+                      : state.isDarkMode
+                      ? 'bg-green-600 text-white hover:bg-green-700'
+                      : 'bg-green-500 text-white hover:bg-green-600'
+                  }`}
+                >
+                  <Link className={`h-3 w-3 ${isSettingUpConnection ? 'animate-spin' : ''}`} />
+                  <span>{isSettingUpConnection ? 'Setting up...' : 'Setup Connection'}</span>
+                </button>
+              )}
+
+              {/* Test Connection Button */}
+              {state.user?.email && (
+                <button
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection || !serverAvailable}
+                  className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                    isTestingConnection || !serverAvailable
+                      ? 'opacity-50 cursor-not-allowed'
+                      : state.isDarkMode
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-purple-500 text-white hover:bg-purple-600'
+                  }`}
+                >
+                  <TestTube className={`h-3 w-3 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                  <span>{isTestingConnection ? 'Testing...' : 'Test AI Agent'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Chat Messages */}
@@ -751,10 +808,6 @@ export default function AiSidebar() {
           className={`flex-1 overflow-y-auto p-4 space-y-4 ${
             state.isDarkMode ? 'scrollbar-dark' : 'scrollbar-light'
           }`}
-          style={{ 
-            maxHeight: 'calc(100vh - 500px)',
-            minHeight: '200px'
-          }}
         >
           {state.chatMessages.length === 0 && (
             <div className={`text-center py-8 ${
@@ -816,7 +869,7 @@ export default function AiSidebar() {
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">AI agent is analyzing your request and selecting tools...</span>
+                  <span className="text-xs opacity-70">AI agent is analyzing your request...</span>
                 </div>
               </div>
             </div>
@@ -887,168 +940,6 @@ export default function AiSidebar() {
               <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* AI Agent Status */}
-      <div className={`border-t p-4 flex-shrink-0 ${
-        state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-      }`}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Zap className={`h-4 w-4 ${
-              state.isDarkMode ? 'text-purple-400' : 'text-purple-500'
-            }`} />
-            <h3 className={`text-sm font-medium ${
-              state.isDarkMode ? 'text-white' : 'text-gray-900'
-            }`}>
-              AI Agent Setup
-            </h3>
-          </div>
-          <button
-            onClick={() => setShowComposioSettings(!showComposioSettings)}
-            className={`p-1 rounded transition-colors ${
-              state.isDarkMode
-                ? 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-            }`}
-          >
-            <Settings className="h-3 w-3" />
-          </button>
-        </div>
-
-        {showComposioSettings && (
-          <div className="space-y-3 mb-3">
-            {/* Setup Connection Button */}
-            {state.user?.email && hasValidEmail && !isComposioConnected && (
-              <button
-                onClick={handleSetupConnection}
-                disabled={isSettingUpConnection || !serverAvailable}
-                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  isSettingUpConnection || !serverAvailable
-                    ? 'opacity-50 cursor-not-allowed'
-                    : state.isDarkMode
-                    ? 'bg-green-600 text-white hover:bg-green-700'
-                    : 'bg-green-500 text-white hover:bg-green-600'
-                }`}
-              >
-                <Link className={`h-3 w-3 ${isSettingUpConnection ? 'animate-spin' : ''}`} />
-                <span>{isSettingUpConnection ? 'Setting up...' : 'Setup Connection'}</span>
-              </button>
-            )}
-
-            {/* Test Connection Button */}
-            {state.user?.email && (
-              <button
-                onClick={handleTestConnection}
-                disabled={isTestingConnection || !serverAvailable}
-                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  isTestingConnection || !serverAvailable
-                    ? 'opacity-50 cursor-not-allowed'
-                    : state.isDarkMode
-                    ? 'bg-purple-600 text-white hover:bg-purple-700'
-                    : 'bg-purple-500 text-white hover:bg-purple-600'
-                }`}
-              >
-                <TestTube className={`h-3 w-3 ${isTestingConnection ? 'animate-spin' : ''}`} />
-                <span>{isTestingConnection ? 'Testing...' : 'Test AI Agent'}</span>
-              </button>
-            )}
-
-            {/* Test Results */}
-            {testResults && (
-              <div className={`p-3 rounded-lg text-xs ${
-                state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-gray-100 border border-gray-300'
-              }`}>
-                <div className="font-medium mb-2">AI Agent Test Results:</div>
-                <pre className={`text-xs overflow-auto max-h-32 ${
-                  state.isDarkMode ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  {JSON.stringify(testResults, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Agent Status */}
-        <div className={`text-xs p-2 rounded-lg ${
-          isComposioConnected && hasValidEmail
-            ? state.isDarkMode ? 'bg-purple-900 bg-opacity-20 text-purple-400' : 'bg-purple-50 text-purple-600'
-            : hasValidEmail
-              ? state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
-              : state.isDarkMode ? 'bg-orange-900 bg-opacity-20 text-orange-400' : 'bg-orange-50 text-orange-600'
-        }`}>
-          <div className="flex items-center space-x-1 mb-1">
-            <Brain className="h-3 w-3" />
-            <span className="font-medium">
-              {isComposioConnected && hasValidEmail ? 'AI Agent Active' : 
-               hasValidEmail ? 'Setup Required' : 'Email Verification Needed'}
-            </span>
-          </div>
-          <p>
-            {isComposioConnected && hasValidEmail
-              ? `Your OpenAI agent (${displayUserEmail}) has access to Google Calendar tools and can intelligently decide which ones to use for your requests.`
-              : hasValidEmail
-                ? `Your AI agent needs to be connected to Google Calendar. Use the "Setup Connection" button to authenticate.`
-                : `Email verification is required for the AI agent with Google Calendar tools. Basic calendar features are available.`
-            }
-          </p>
-          {lastToolsUsed > 0 && isComposioConnected && hasValidEmail && (
-            <p className="mt-1 text-xs opacity-75">
-              🔧 Last interaction used {lastToolsUsed} calendar tool{lastToolsUsed > 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* AI Suggestions */}
-      <div className={`border-t p-4 flex-shrink-0 ${
-        state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-      }`}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Lightbulb className={`h-4 w-4 ${
-              state.isDarkMode ? 'text-yellow-400' : 'text-yellow-500'
-            }`} />
-            <h3 className={`text-sm font-medium ${
-              state.isDarkMode ? 'text-white' : 'text-gray-900'
-            }`}>
-              AI Suggestions
-            </h3>
-          </div>
-          <button
-            onClick={() => setIsGenerating(!isGenerating)}
-            disabled={isGenerating || !state.user?.preferences}
-            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              (isGenerating)
-                ? 'opacity-50 cursor-not-allowed'
-                : state.isDarkMode
-                ? 'bg-purple-600 text-white hover:bg-purple-700'
-                : 'bg-purple-500 text-white hover:bg-purple-600'
-            }`}
-          >
-            <Sparkles className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
-            <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
-          </button>
-        </div>
-
-        <div className="space-y-2 max-h-48 overflow-y-auto">
-          {state.aiSuggestions.length === 0 ? (
-            <div className={`text-center py-4 ${
-              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-            }`}>
-              <Lightbulb className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">Click "Generate" for personalized suggestions</p>
-            </div>
-          ) : (
-            state.aiSuggestions.slice(0, 3).map((suggestion, index) => (
-              <AiSuggestionCard 
-                key={`${suggestion.id}_${index}`}
-                suggestion={suggestion} 
-              />
-            ))
-          )}
         </div>
       </div>
     </div>

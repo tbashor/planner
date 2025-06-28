@@ -9,7 +9,7 @@ import { format } from 'date-fns';
 import EventDialog from '../EventManagement/EventDialog';
 import QuickEventCreator from '../EventManagement/QuickEventCreator';
 import EventContextMenu from '../EventManagement/EventContextMenu';
-import { Plus, Zap, Undo, Redo } from 'lucide-react';
+import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { mockEvents } from '../../data/mockData';
 
@@ -465,7 +465,7 @@ export default function ToastCalendar() {
   }, [state.events, calendarEvents, calendarInstance]);
 
   return (
-    <div className={`flex-1 flex flex-col h-full ${
+    <div className={`h-full flex flex-col ${
       state.isDarkMode ? 'bg-gray-900' : 'bg-white'
     }`}>
       {/* Calendar Header */}
@@ -497,11 +497,23 @@ export default function ToastCalendar() {
             </button>
           </div>
           
-          <h2 className={`text-xl font-semibold ${
-            state.isDarkMode ? 'text-white' : 'text-gray-900'
-          }`}>
-            Calendar
-          </h2>
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-orange-500 rounded-lg flex items-center justify-center">
+              <CalendarIcon className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <h2 className={`font-semibold ${
+                state.isDarkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                Calendar
+              </h2>
+              <p className={`text-xs ${
+                state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                {isAuthenticated ? `Connected as ${userEmail}` : 'Local calendar'}
+              </p>
+            </div>
+          </div>
 
           {/* Loading indicator */}
           {isLoadingCalendarData && (
@@ -588,7 +600,7 @@ export default function ToastCalendar() {
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
             >
-              Sync
+              <RefreshCw className={`h-4 w-4 ${isLoadingCalendarData ? 'animate-spin' : ''}`} />
             </button>
           )}
 
@@ -629,15 +641,15 @@ export default function ToastCalendar() {
       </div>
 
       {/* Toast UI Calendar */}
-      <div className="flex-1 p-4">
-        <div className={`h-full rounded-lg overflow-hidden ${
+      <div className="flex-1 overflow-hidden">
+        <div className={`h-full ${
           state.isDarkMode ? 'bg-gray-800' : 'bg-white'
         }`}>
           <Calendar
             ref={calendarRef}
-            height="800px"
+            height="100%"
             view={view}
-            events={convertToToastEvents(state.events)}
+            events={convertToToastEvents(getAllEvents())}
             calendars={calendarOptions.calendars}
             week={calendarOptions.week}
             month={calendarOptions.month}
