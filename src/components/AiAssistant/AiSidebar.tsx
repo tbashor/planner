@@ -37,7 +37,6 @@ export default function AiSidebar() {
   const [setupRedirectUrl, setSetupRedirectUrl] = useState<string | null>(null);
   const [lastSetupAttempt, setLastSetupAttempt] = useState<number>(0);
   const [isCheckingConnections, setIsCheckingConnections] = useState<boolean>(false);
-  const [hasShownPersonalizedWelcome, setHasShownPersonalizedWelcome] = useState(false);
 
   // Helper function to validate if an email is real (not a fallback) - memoized to prevent excessive calls
   const isValidRealEmail = useCallback((email: string): boolean => {
@@ -89,213 +88,45 @@ export default function AiSidebar() {
     return null;
   }, [state.user?.email, isValidRealEmail]);
 
-  // Helper function to prepare chat conversation context with enhanced user preferences
+  // Enhanced helper function to prepare chat conversation context with BOTH user and AI messages
   const prepareChatContext = useCallback(() => {
-    const maxMessages = 20; // Send last 20 messages for context
+    const maxMessages = 10; // Send last 10 messages (5 exchanges) for context
     const recentMessages = state.chatMessages.slice(-maxMessages);
     
-    // Format messages for the AI agent
+    // Format messages for the AI agent - include BOTH user and assistant messages
     const conversationHistory = recentMessages.map(msg => ({
       role: msg.type === 'user' ? 'user' : 'assistant',
       content: msg.content,
-      timestamp: msg.timestamp
+      timestamp: msg.timestamp,
+      messageId: msg.id
     }));
 
-    // Enhanced user preferences context
-    const userPreferencesContext = state.user?.preferences ? {
-      workingHours: state.user.preferences.workingHours,
-      productivityHours: state.user.preferences.productivityHours,
-      focusAreas: state.user.preferences.focusAreas,
-      dailyRoutines: state.user.preferences.dailyRoutines,
-      goals: state.user.preferences.goals,
-      motivationalFeedback: state.user.preferences.motivationalFeedback,
-      aiSuggestions: state.user.preferences.aiSuggestions,
-      timeBlockSize: state.user.preferences.timeBlockSize,
-      theme: state.user.preferences.theme
-    } : null;
+    // Add conversation flow analysis
+    const userMessages = recentMessages.filter(msg => msg.type === 'user');
+    const aiMessages = recentMessages.filter(msg => msg.type === 'ai');
+    
+    console.log(`📝 Preparing conversation context:`, {
+      totalMessages: recentMessages.length,
+      userMessages: userMessages.length,
+      aiMessages: aiMessages.length,
+      lastUserMessage: userMessages[userMessages.length - 1]?.content?.substring(0, 50),
+      lastAiMessage: aiMessages[aiMessages.length - 1]?.content?.substring(0, 50)
+    });
 
     return {
       conversationHistory,
       messageCount: recentMessages.length,
       totalMessages: state.chatMessages.length,
-      userPreferences: userPreferencesContext,
-      userName: state.user?.name,
-      userEmail: state.user?.email
+      conversationFlow: {
+        userMessageCount: userMessages.length,
+        aiMessageCount: aiMessages.length,
+        lastExchange: recentMessages.length >= 2 ? {
+          user: recentMessages[recentMessages.length - 2]?.type === 'user' ? recentMessages[recentMessages.length - 2]?.content : null,
+          ai: recentMessages[recentMessages.length - 1]?.type === 'ai' ? recentMessages[recentMessages.length - 1]?.content : null
+        } : null
+      }
     };
-  }, [state.chatMessages, state.user]);
-
-  // Generate personalized welcome message based on user preferences
-  const generatePersonalizedWelcome = useCallback(() => {
-    if (!state.user?.preferences || hasShownPersonalizedWelcome) return;
-
-    const preferences = state.user.preferences;
-    const userName = state.user.name || 'there';
-    
-    let welcomeMessage = `👋 Welcome ${userName}! I've analyzed your preferences and I'm excited to help you optimize your schedule. `;
-
-    // Add focus area insights
-    if (preferences.focusAreas && preferences.focusAreas.length > 0) {
-      const focusAreasText = preferences.focusAreas.map(area => area.replace('-', ' & ')).join(', ');
-      welcomeMessage += `I see you're focused on ${focusAreasText}. `;
-    }
-
-    // Add productivity hours insight
-    if (preferences.productivityHours && preferences.productivityHours.length > 0) {
-      const productiveTimesText = preferences.productivityHours.join(', ');
-      welcomeMessage += `Your peak productivity hours are ${productiveTimesText} - I'll prioritize important tasks during these times. `;
-    }
-
-    // Add daily routines insight
-    if (preferences.dailyRoutines && preferences.dailyRoutines.length > 0) {
-      const routinesText = preferences.dailyRoutines.join(', ');
-      welcomeMessage += `I notice you have routines for ${routinesText} - I can help you maintain consistency with these. `;
-    }
-
-    // Add working hours insight
-    if (preferences.workingHours) {
-      welcomeMessage += `Your working hours are ${preferences.workingHours.start} to ${preferences.workingHours.end}. `;
-    }
-
-    // Add goals insight
-    if (preferences.goals && preferences.goals.trim()) {
-      welcomeMessage += `I'll keep your goals in mind: "${preferences.goals.substring(0, 100)}${preferences.goals.length > 100 ? '...' : ''}". `;
-    }
-
-    // Add personalized suggestions
-    welcomeMessage += '\n\n💡 Here are some ways I can help you right now:\n';
-    
-    const suggestions = [];
-    
-    if (preferences.dailyRoutines?.includes('breakfast')) {
-      suggestions.push('• "Schedule my breakfast for tomorrow at 8am"');
-    }
-    if (preferences.dailyRoutines?.includes('lunch')) {
-      suggestions.push('• "Add lunch break to my schedule"');
-    }
-    if (preferences.dailyRoutines?.includes('exercise')) {
-      suggestions.push('• "Plan my workout for this week"');
-    }
-    if (preferences.focusAreas?.includes('learning-education')) {
-      suggestions.push('• "Block time for studying tomorrow"');
-    }
-    if (preferences.focusAreas?.includes('work-career')) {
-      suggestions.push('• "Schedule focused work time"');
-    }
-    if (preferences.focusAreas?.includes('health-fitness')) {
-      suggestions.push('• "Add a wellness activity to my calendar"');
-    }
-
-    // Add generic suggestions if no specific routines
-    if (suggestions.length === 0) {
-      suggestions.push(
-        '• "What should I work on today?"',
-        '• "Schedule a study session for tomorrow"',
-        '• "Add a break to my schedule"'
-      );
-    }
-
-    welcomeMessage += suggestions.slice(0, 4).join('\n');
-    welcomeMessage += '\n\nJust tell me what you need, and I\'ll create the perfect schedule for you! 🎯';
-
-    dispatch({
-      type: 'ADD_CHAT_MESSAGE',
-      payload: {
-        id: `personalized_welcome_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: 'ai',
-        content: welcomeMessage,
-        timestamp: new Date().toISOString(),
-      },
-    });
-
-    setHasShownPersonalizedWelcome(true);
-  }, [state.user, hasShownPersonalizedWelcome, dispatch]);
-
-  // Generate proactive suggestions based on missing routines
-  const generateProactiveSuggestions = useCallback(() => {
-    if (!state.user?.preferences || state.chatMessages.length > 5) return; // Only for new users
-
-    const preferences = state.user.preferences;
-    const currentHour = new Date().getHours();
-    const suggestions = [];
-
-    // Check for missing daily routines and suggest them
-    if (preferences.dailyRoutines?.includes('breakfast') && currentHour >= 7 && currentHour <= 9) {
-      const hasBreakfastToday = state.events.some(event => 
-        event.date === new Date().toISOString().split('T')[0] && 
-        event.title.toLowerCase().includes('breakfast')
-      );
-      
-      if (!hasBreakfastToday) {
-        suggestions.push({
-          type: 'routine',
-          message: `🍳 I notice you have breakfast as a daily routine, but I don't see it scheduled for today. Would you like me to add "Breakfast" at 8:00 AM?`,
-          action: 'schedule_breakfast'
-        });
-      }
-    }
-
-    if (preferences.dailyRoutines?.includes('lunch') && currentHour >= 11 && currentHour <= 13) {
-      const hasLunchToday = state.events.some(event => 
-        event.date === new Date().toISOString().split('T')[0] && 
-        event.title.toLowerCase().includes('lunch')
-      );
-      
-      if (!hasLunchToday) {
-        suggestions.push({
-          type: 'routine',
-          message: `🥗 It's almost lunch time! Since lunch is part of your daily routine, shall I schedule "Lunch Break" at 12:30 PM?`,
-          action: 'schedule_lunch'
-        });
-      }
-    }
-
-    if (preferences.dailyRoutines?.includes('exercise') && currentHour >= 17 && currentHour <= 19) {
-      const hasExerciseToday = state.events.some(event => 
-        event.date === new Date().toISOString().split('T')[0] && 
-        (event.title.toLowerCase().includes('exercise') || event.title.toLowerCase().includes('workout'))
-      );
-      
-      if (!hasExerciseToday) {
-        suggestions.push({
-          type: 'routine',
-          message: `💪 I see exercise is important to you! Your schedule looks free this evening. Would you like me to add a workout session?`,
-          action: 'schedule_exercise'
-        });
-      }
-    }
-
-    // Suggest focus area activities
-    if (preferences.focusAreas?.includes('learning-education') && currentHour >= 9 && currentHour <= 11) {
-      const hasStudyToday = state.events.some(event => 
-        event.date === new Date().toISOString().split('T')[0] && 
-        (event.title.toLowerCase().includes('study') || event.title.toLowerCase().includes('learn'))
-      );
-      
-      if (!hasStudyToday) {
-        suggestions.push({
-          type: 'focus',
-          message: `📚 Since learning is one of your focus areas, would you like me to schedule a study session during your productive hours?`,
-          action: 'schedule_study'
-        });
-      }
-    }
-
-    // Send one suggestion at a time to avoid overwhelming
-    if (suggestions.length > 0) {
-      const suggestion = suggestions[0];
-      setTimeout(() => {
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: `proactive_${suggestion.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'ai',
-            content: suggestion.message,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      }, 3000); // Delay to not overwhelm user
-    }
-  }, [state.user?.preferences, state.events, state.chatMessages.length, dispatch]);
+  }, [state.chatMessages]);
 
   // Check server availability and connections - debounced to prevent excessive calls
   const checkServerAndConnections = useCallback(async () => {
@@ -452,20 +283,6 @@ export default function AiSidebar() {
       checkServerAndConnections();
     }
   }, [getAuthenticatedUserEmail]);
-
-  // Show personalized welcome and proactive suggestions when user completes onboarding
-  useEffect(() => {
-    if (state.isOnboardingComplete && state.user?.preferences && !hasShownPersonalizedWelcome) {
-      // Delay to allow other initialization to complete
-      setTimeout(() => {
-        generatePersonalizedWelcome();
-        // Generate proactive suggestions after welcome
-        setTimeout(() => {
-          generateProactiveSuggestions();
-        }, 5000);
-      }, 2000);
-    }
-  }, [state.isOnboardingComplete, state.user?.preferences, hasShownPersonalizedWelcome, generatePersonalizedWelcome, generateProactiveSuggestions]);
 
   const handleSetupConnection = async () => {
     const userEmail = getAuthenticatedUserEmail;
@@ -680,22 +497,30 @@ export default function AiSidebar() {
     try {
       console.log(`🤖 Sending message to OpenAI agent for validated user: ${userEmail}`);
       
-      // Prepare enhanced context with conversation history and user preferences
+      // Prepare enhanced context with conversation history INCLUDING AI responses
       const chatContext = prepareChatContext();
       
-      // Send message to OpenAI agent with Composio tools, conversation context, and user preferences
+      console.log(`📝 Enhanced conversation context prepared:`, {
+        historyLength: chatContext.conversationHistory.length,
+        userMessages: chatContext.conversationFlow.userMessageCount,
+        aiMessages: chatContext.conversationFlow.aiMessageCount,
+        lastExchange: chatContext.conversationFlow.lastExchange
+      });
+      
+      // Send message to OpenAI agent with Composio tools and FULL conversation context
       const response = await composioService.sendMessage(userMessage, userEmail, {
         events: state.events,
-        preferences: chatContext.userPreferences,
+        preferences: state.user?.preferences,
         currentDate: new Date(),
-        // Add conversation history to context
+        // Enhanced conversation history with BOTH user and AI messages
         conversationHistory: chatContext.conversationHistory,
         conversationMetadata: {
           messageCount: chatContext.messageCount,
           totalMessages: chatContext.totalMessages,
           userEmail: userEmail,
-          userName: chatContext.userName,
-          timestamp: new Date().toISOString()
+          userName: state.user?.name,
+          timestamp: new Date().toISOString(),
+          conversationFlow: chatContext.conversationFlow
         }
       });
 
@@ -734,7 +559,7 @@ export default function AiSidebar() {
 
           // Add conversation context info for debugging (only in development)
           if (import.meta.env.DEV && chatContext.messageCount > 0) {
-            aiMessage += `\n\n*[Context: ${chatContext.messageCount} recent messages provided]*`;
+            aiMessage += `\n\n*[Context: ${chatContext.messageCount} recent messages (${chatContext.conversationFlow.userMessageCount} user, ${chatContext.conversationFlow.aiMessageCount} AI) provided for continuity]*`;
           }
 
           dispatch({
@@ -818,7 +643,7 @@ export default function AiSidebar() {
           payload: {
             id: `test_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `🧪 AI agent connection test successful for ${userEmail}! Your OpenAI agent has access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools and can intelligently decide which ones to use for your requests.`,
+            content: `🧪 AI agent connection test successful for ${userEmail}! Your OpenAI agent has access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools and can intelligently decide which ones to use for your requests. I also have full conversation memory to maintain context across our chat.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -852,6 +677,47 @@ export default function AiSidebar() {
   const displayUserEmail = getAuthenticatedUserEmail;
   const hasValidEmail = !!displayUserEmail;
 
+  // Generate dynamic placeholder based on conversation context and user preferences
+  const getChatPlaceholder = () => {
+    const baseMessages = [
+      "Tell me what you need help with...",
+      "Ask me about your schedule or create events...",
+      "What would you like me to help you with today?"
+    ];
+
+    // If user has routines, suggest routine-based actions
+    if (state.user?.preferences?.dailyRoutines?.length > 0) {
+      const routines = state.user.preferences.dailyRoutines;
+      if (routines.includes('lunch')) {
+        return "Try: 'Schedule my lunch break' or ask about your day...";
+      }
+      if (routines.includes('exercise')) {
+        return "Try: 'Add my workout' or ask about your schedule...";
+      }
+    }
+
+    // If user has focus areas, suggest focus-based actions
+    if (state.user?.preferences?.focusAreas?.length > 0) {
+      const focusAreas = state.user.preferences.focusAreas;
+      if (focusAreas.includes('learning-education')) {
+        return "Try: 'Schedule study time' or ask about your calendar...";
+      }
+      if (focusAreas.includes('health-fitness')) {
+        return "Try: 'Add workout session' or check your schedule...";
+      }
+    }
+
+    // Check recent conversation for context
+    if (state.chatMessages.length > 0) {
+      const lastMessage = state.chatMessages[state.chatMessages.length - 1];
+      if (lastMessage.type === 'ai' && lastMessage.content.includes('schedule')) {
+        return "Continue our conversation or ask something new...";
+      }
+    }
+
+    return baseMessages[Math.floor(Math.random() * baseMessages.length)];
+  };
+
   return (
     <div className={`h-full flex flex-col ${
       state.isDarkMode 
@@ -880,7 +746,7 @@ export default function AiSidebar() {
                     <span className={`text-xs ${
                       state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
                     }`}>
-                      Active
+                      Active with Memory
                     </span>
                   </>
                 ) : (
@@ -909,7 +775,7 @@ export default function AiSidebar() {
           </button>
         </div>
         
-        {/* User Info with Preferences Summary */}
+        {/* User Info */}
         {state.user?.email && (
           <div className={`mt-3 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -917,44 +783,10 @@ export default function AiSidebar() {
             <div className="flex items-center space-x-2">
               <User className="h-3 w-3" />
               <span className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
-                {state.user.name} ({state.user.email})
+                {state.user.email}
               </span>
             </div>
-            
-            {/* User Preferences Summary */}
-            {state.user.preferences && (
-              <div className="mt-2 space-y-1">
-                {state.user.preferences.focusAreas && state.user.preferences.focusAreas.length > 0 && (
-                  <div className="flex items-center space-x-1">
-                    <span>🎯 Focus:</span>
-                    <span className="text-blue-500">{state.user.preferences.focusAreas.slice(0, 2).map(area => area.replace('-', ' & ')).join(', ')}</span>
-                  </div>
-                )}
-                
-                {state.user.preferences.productivityHours && state.user.preferences.productivityHours.length > 0 && (
-                  <div className="flex items-center space-x-1">
-                    <span>⚡ Peak:</span>
-                    <span className="text-purple-500">{state.user.preferences.productivityHours.slice(0, 2).join(', ')}</span>
-                  </div>
-                )}
-                
-                {state.user.preferences.dailyRoutines && state.user.preferences.dailyRoutines.length > 0 && (
-                  <div className="flex items-center space-x-1">
-                    <span>🔄 Routines:</span>
-                    <span className="text-green-500">{state.user.preferences.dailyRoutines.join(', ')}</span>
-                  </div>
-                )}
-                
-                {state.user.preferences.workingHours && (
-                  <div className="flex items-center space-x-1">
-                    <span>🕒 Work:</span>
-                    <span className="text-orange-500">{state.user.preferences.workingHours.start} - {state.user.preferences.workingHours.end}</span>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            <div className="flex items-center space-x-2 mt-2">
+            <div className="flex items-center space-x-2 mt-1">
               <Calendar className="h-3 w-3" />
               <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
               {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
@@ -967,9 +799,12 @@ export default function AiSidebar() {
             {isComposioConnected && hasValidEmail && (
               <div className="text-purple-500 mt-1">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
             )}
-            {/* Chat Context Info */}
+            {/* Enhanced Chat Context Info */}
             {state.chatMessages.length > 0 && (
-              <div className="text-blue-500 mt-1">💬 {state.chatMessages.length} messages in conversation</div>
+              <div className="text-blue-500 mt-1">
+                💬 {state.chatMessages.length} messages in conversation 
+                {isComposioConnected && <span className="text-green-500"> • Full memory active</span>}
+              </div>
             )}
           </div>
         )}
@@ -1095,7 +930,7 @@ export default function AiSidebar() {
               <p className="text-sm">Chat with your intelligent AI calendar agent</p>
               <p className="text-xs mt-1">
                 {hasValidEmail 
-                  ? 'Powered by OpenAI with Composio Google Calendar tools'
+                  ? 'Powered by OpenAI with Composio Google Calendar tools & full conversation memory'
                   : 'Email verification required for AI agent features'
                 }
               </p>
@@ -1147,7 +982,7 @@ export default function AiSidebar() {
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">AI agent is analyzing your request with your preferences and conversation context...</span>
+                  <span className="text-xs opacity-70">AI agent is analyzing with full conversation context...</span>
                 </div>
               </div>
             </div>
@@ -1170,9 +1005,7 @@ export default function AiSidebar() {
                     ? "AI agent server is offline..."
                     : !hasValidEmail
                       ? "Email verification needed for AI agent..."
-                      : state.user?.preferences?.dailyRoutines?.includes('lunch')
-                        ? "Try: 'Schedule my lunch break' or 'What's on my calendar?'"
-                        : "Tell me what you need help with..."
+                      : getChatPlaceholder()
               }
               disabled={isProcessingMessage || !state.user?.email || !serverAvailable}
               className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${
@@ -1206,7 +1039,7 @@ export default function AiSidebar() {
             </button>
           </form>
           
-          {/* Enhanced Helper text with personalized suggestions */}
+          {/* Helper text */}
           <div className={`mt-2 text-xs ${
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
@@ -1218,30 +1051,12 @@ export default function AiSidebar() {
               <p>📧 Email verification needed for AI agent features</p>
             ) : (
               <div>
-                {state.user?.preferences ? (
-                  <div>
-                    <p>🤖 Personalized suggestions based on your preferences:</p>
-                    <div className="mt-1 space-y-1">
-                      {state.user.preferences.dailyRoutines?.includes('lunch') && (
-                        <p className="text-green-500">• "Schedule my lunch break at 12:30"</p>
-                      )}
-                      {state.user.preferences.dailyRoutines?.includes('exercise') && (
-                        <p className="text-blue-500">• "Add my workout to tomorrow's schedule"</p>
-                      )}
-                      {state.user.preferences.focusAreas?.includes('learning-education') && (
-                        <p className="text-purple-500">• "Block time for studying during my peak hours"</p>
-                      )}
-                      {state.user.preferences.focusAreas?.includes('work-career') && (
-                        <p className="text-orange-500">• "Schedule focused work time"</p>
-                      )}
-                      <p className="text-gray-500">• "What's on my calendar today?" • "Find me free time this week"</p>
-                    </div>
-                  </div>
-                ) : (
-                  <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
-                )}
+                <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
                 {state.chatMessages.length > 0 && (
-                  <p className="mt-1 opacity-75">💬 Conversation context: {Math.min(state.chatMessages.length, 20)} recent messages</p>
+                  <p className="mt-1 opacity-75">
+                    💬 Conversation context: {Math.min(state.chatMessages.length, 10)} recent messages 
+                    {isComposioConnected && <span className="text-green-500"> • Full memory enabled</span>}
+                  </p>
                 )}
               </div>
             )}

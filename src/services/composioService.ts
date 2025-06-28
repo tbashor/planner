@@ -168,6 +168,7 @@ class ComposioService {
         role: 'user' | 'assistant';
         content: string;
         timestamp: string;
+        messageId?: string;
       }>;
       conversationMetadata?: {
         messageCount: number;
@@ -175,6 +176,14 @@ class ComposioService {
         userEmail: string;
         userName?: string;
         timestamp: string;
+        conversationFlow?: {
+          userMessageCount: number;
+          aiMessageCount: number;
+          lastExchange?: {
+            user: string | null;
+            ai: string | null;
+          } | null;
+        };
       };
     }
   ): Promise<AIMessageResponse> {
@@ -187,10 +196,15 @@ class ComposioService {
     }
 
     console.log(`💬 Sending AI message for user ${userEmail}: "${message}"`);
-    console.log(`📝 Conversation context: ${context?.conversationHistory?.length || 0} messages`);
-    console.log(`🎯 User preferences:`, context?.preferences);
+    console.log(`📝 Enhanced conversation context:`, {
+      historyLength: context?.conversationHistory?.length || 0,
+      userMessages: context?.conversationMetadata?.conversationFlow?.userMessageCount || 0,
+      aiMessages: context?.conversationMetadata?.conversationFlow?.aiMessageCount || 0,
+      hasPreferences: !!context?.preferences,
+      hasEvents: !!(context?.events?.length)
+    });
 
-    // Enhanced context with user preferences and conversation history
+    // Enhanced context with user preferences and FULL conversation history
     const enhancedContext = {
       ...context,
       currentDate: context?.currentDate?.toISOString(),
@@ -203,6 +217,13 @@ class ComposioService {
         workingHours: context.preferences.workingHours,
         preferredTimeBlocks: context.preferences.timeBlockSize || 60,
         motivationalFeedbackEnabled: context.preferences.motivationalFeedback
+      } : null,
+      // Enhanced conversation metadata
+      conversationAnalysis: context?.conversationHistory ? {
+        totalExchanges: Math.floor((context.conversationHistory.length) / 2),
+        hasContext: context.conversationHistory.length > 0,
+        recentTopics: this.extractRecentTopics(context.conversationHistory),
+        conversationContinuity: context.conversationMetadata?.conversationFlow
       } : null
     };
 
@@ -214,6 +235,35 @@ class ComposioService {
         context: enhancedContext
       }),
     });
+  }
+
+  /**
+   * Extract recent topics from conversation history for better context
+   */
+  private extractRecentTopics(conversationHistory: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: string;
+  }>): string[] {
+    const topics = new Set<string>();
+    
+    // Look for common calendar/scheduling keywords in recent messages
+    const keywords = [
+      'schedule', 'meeting', 'appointment', 'calendar', 'event', 'time',
+      'today', 'tomorrow', 'week', 'month', 'reminder', 'break', 'lunch',
+      'workout', 'study', 'work', 'project', 'deadline', 'free time'
+    ];
+    
+    conversationHistory.slice(-6).forEach(msg => { // Last 6 messages
+      const content = msg.content.toLowerCase();
+      keywords.forEach(keyword => {
+        if (content.includes(keyword)) {
+          topics.add(keyword);
+        }
+      });
+    });
+    
+    return Array.from(topics).slice(0, 5); // Return top 5 topics
   }
 
   /**
