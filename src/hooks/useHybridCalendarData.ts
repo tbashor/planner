@@ -109,7 +109,19 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
 
     try {
       // Use the current week from app state, or fallback to current date
-      const currentDate = state.currentWeek || new Date();
+      // Ensure we have a valid Date object
+      let currentDate = new Date();
+      
+      if (state.currentWeek) {
+        // Check if state.currentWeek is a valid Date
+        const stateDate = new Date(state.currentWeek);
+        if (!isNaN(stateDate.getTime())) {
+          currentDate = stateDate;
+        } else {
+          console.warn('⚠️ Invalid date in state.currentWeek, using current date instead');
+        }
+      }
+
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 }); // Sunday start
       const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 }); // Saturday end
 
@@ -137,7 +149,7 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
         setIsLoading(false);
       }
     }
-  }, [fetchEvents, isAuthenticated]);
+  }, [fetchEvents, isAuthenticated, state.currentWeek]);
 
   /**
    * Create a new event using Composio calendar tools
@@ -272,4 +284,4 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
     deleteEvent,
     refreshTokens,
   };
-} 
+}
