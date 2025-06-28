@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, RefreshCw } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import composioService from '../../services/composioService';
@@ -34,6 +34,7 @@ export default function AiSidebar() {
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
   const [lastToolsUsed, setLastToolsUsed] = useState<number>(0);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -125,8 +126,16 @@ export default function AiSidebar() {
       } else {
         setIsComposioConnected(false);
         setConnectionStatus('disconnected');
-        setComposioConnectionError(testResult.error || 'AI agent connection not found');
-        console.warn(`❌ AI agent connection failed for ${userEmail}`);
+        
+        // Check if this is a connection issue that can be fixed
+        if (testResult.error?.includes('Could not find a connection') || 
+            testResult.error?.includes('No connection found')) {
+          setComposioConnectionError('AI agent connection lost. Click "Reconnect" to restore access.');
+        } else {
+          setComposioConnectionError(testResult.error || 'AI agent connection not found');
+        }
+        
+        console.warn(`❌ AI agent connection failed for ${userEmail}:`, testResult.error);
       }
     } catch (error) {
       setIsComposioConnected(false);
@@ -134,6 +143,69 @@ export default function AiSidebar() {
       setConnectionStatus('error');
       setComposioConnectionError('Failed to check AI agent connection');
       console.error('❌ Error checking AI agent connection:', error);
+    }
+  };
+
+  const handleReconnectComposio = async () => {
+    const userEmail = getAuthenticatedUserEmail();
+    if (!userEmail) {
+      setComposioConnectionError('Email verification required for AI agent features');
+      return;
+    }
+
+    setIsReconnecting(true);
+    setComposioConnectionError(null);
+
+    try {
+      console.log(`🔄 Reconnecting Composio for user: ${userEmail}`);
+      
+      const result = await composioService.setupUserConnection(userEmail);
+      
+      if (result.success) {
+        if (result.redirectUrl) {
+          // User needs to authenticate with Google Calendar
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_reconnect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `🔄 I'm reconnecting your AI agent for ${userEmail}. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
+
+Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands again!`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+
+          // Open the redirect URL
+          window.open(result.redirectUrl, '_blank');
+        } else {
+          // Connection already exists or was restored
+          setIsComposioConnected(true);
+          setConnectionStatus(result.status || 'active');
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_restored_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `🎉 Perfect! Your AI agent connection for ${userEmail} has been restored. I can now manage your Google Calendar using AI commands again. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+        
+        // Refresh connection status
+        setTimeout(() => {
+          checkServerAndConnections();
+        }, 2000);
+      } else {
+        setComposioConnectionError(result.error || 'Failed to reconnect AI agent');
+      }
+    } catch (error) {
+      console.error('❌ Error reconnecting Composio:', error);
+      setComposioConnectionError('Failed to reconnect AI agent');
+    } finally {
+      setIsReconnecting(false);
     }
   };
 
@@ -203,12 +275,19 @@ export default function AiSidebar() {
             });
           } else {
             // Add message suggesting connection setup
+            let aiMessage = response.response.message;
+            
+            // If this is a connection issue, suggest reconnection
+            if (response.response.needsSetup) {
+              aiMessage += '\n\n💡 Try using the "Reconnect AI Agent" button in the settings to restore your connection.';
+            }
+            
             dispatch({
               type: 'ADD_CHAT_MESSAGE',
               payload: {
                 id: `ai_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 type: 'ai',
-                content: response.response.message,
+                content: aiMessage,
                 timestamp: new Date().toISOString(),
               },
             });
@@ -316,7 +395,7 @@ export default function AiSidebar() {
           payload: {
             id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `❌ AI agent connection test failed for ${userEmail}: ${result.error}. Your connections were set up during onboarding, so this might be a temporary issue.`,
+            content: `❌ AI agent connection test failed for ${userEmail}: ${result.error}. Try using the "Reconnect AI Agent" button to restore your connection.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -417,16 +496,29 @@ export default function AiSidebar() {
               <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
                 <div className="whitespace-pre-wrap break-words">{composioConnectionError}</div>
-                <button 
-                  onClick={checkServerAndConnections}
-                  className={`mt-2 text-xs underline hover:no-underline ${
-                    hasValidEmail
-                      ? state.isDarkMode ? 'text-red-400' : 'text-red-600'
-                      : state.isDarkMode ? 'text-orange-400' : 'text-orange-600'
-                  }`}
-                >
-                  Retry connection
-                </button>
+                <div className="flex space-x-2 mt-2">
+                  <button 
+                    onClick={checkServerAndConnections}
+                    className={`text-xs underline hover:no-underline ${
+                      hasValidEmail
+                        ? state.isDarkMode ? 'text-red-400' : 'text-red-600'
+                        : state.isDarkMode ? 'text-orange-400' : 'text-orange-600'
+                    }`}
+                  >
+                    Retry check
+                  </button>
+                  {hasValidEmail && composioConnectionError.includes('connection lost') && (
+                    <button 
+                      onClick={handleReconnectComposio}
+                      disabled={isReconnecting}
+                      className={`text-xs underline hover:no-underline ${
+                        state.isDarkMode ? 'text-blue-400' : 'text-blue-600'
+                      } ${isReconnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {isReconnecting ? 'Reconnecting...' : 'Reconnect'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -607,6 +699,24 @@ export default function AiSidebar() {
 
         {showComposioSettings && (
           <div className="space-y-3 mb-3">
+            {/* Reconnect Button */}
+            {state.user?.email && hasValidEmail && !isComposioConnected && (
+              <button
+                onClick={handleReconnectComposio}
+                disabled={isReconnecting || !serverAvailable}
+                className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                  isReconnecting || !serverAvailable
+                    ? 'opacity-50 cursor-not-allowed'
+                    : state.isDarkMode
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-green-500 text-white hover:bg-green-600'
+                }`}
+              >
+                <RefreshCw className={`h-3 w-3 ${isReconnecting ? 'animate-spin' : ''}`} />
+                <span>{isReconnecting ? 'Reconnecting...' : 'Reconnect AI Agent'}</span>
+              </button>
+            )}
+
             {/* Test Connection Button */}
             {state.user?.email && (
               <button
@@ -660,7 +770,7 @@ export default function AiSidebar() {
             {isComposioConnected && hasValidEmail
               ? `Your OpenAI agent (${displayUserEmail}) has access to Google Calendar tools and can intelligently decide which ones to use for your requests.`
               : hasValidEmail
-                ? `Your AI agent was set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
+                ? `Your AI agent connection needs to be restored. Use the "Reconnect AI Agent" button to fix this.`
                 : `Email verification is required for the AI agent with Google Calendar tools. Basic calendar features are available.`
             }
           </p>

@@ -38,54 +38,109 @@ async function setupUserConnectionIfNotExists(userEmail) {
     // Store entity mapping
     userEntities.set(userEmail, entityId);
     
-    const entity = await toolset.client.getEntity(entityId);
+    console.log(`📝 Created entity ID: ${entityId} for user: ${userEmail}`);
     
     try {
+      // First, ensure the entity exists
+      const entity = await toolset.client.getEntity(entityId);
+      console.log(`✅ Entity ${entityId} exists or was created`);
+      
       // Try to get existing connection
-      const connection = await entity.getConnection({
-        app: 'googlecalendar',
-      });
+      const connections = await entity.getConnections();
+      console.log(`🔍 Found ${connections.length} existing connections for entity ${entityId}`);
       
-      console.log(`✅ Found existing Google Calendar connection for ${userEmail}`);
+      // Look for Google Calendar connection
+      const googleCalendarConnection = connections.find(conn => 
+        conn.appName === 'googlecalendar' || 
+        conn.appName === 'GOOGLECALENDAR' ||
+        conn.app === 'googlecalendar'
+      );
       
-      // Store connection info
-      userConnections.set(userEmail, {
-        entityId,
-        connectionId: connection.id,
-        status: 'active',
-        connectedAt: new Date().toISOString()
-      });
+      if (googleCalendarConnection) {
+        console.log(`✅ Found existing Google Calendar connection for ${userEmail}:`, googleCalendarConnection.id);
+        
+        // Store connection info
+        userConnections.set(userEmail, {
+          entityId,
+          connectionId: googleCalendarConnection.id,
+          status: 'active',
+          connectedAt: new Date().toISOString()
+        });
+        
+        return googleCalendarConnection;
+      } else {
+        console.log(`🔄 No existing Google Calendar connection found, creating new one for ${userEmail}`);
+        
+        // Create new connection
+        const newConnection = await entity.initiateConnection({
+          appName: 'googlecalendar',
+          entity: entityId,
+          config: {
+            // Add any required configuration
+          }
+        });
+        
+        console.log(`🔗 Google Calendar connection initiated for ${userEmail}:`, newConnection.redirectUrl);
+        
+        // Store pending connection info
+        userConnections.set(userEmail, {
+          entityId,
+          connectionId: newConnection.id,
+          redirectUrl: newConnection.redirectUrl,
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        });
+        
+        return newConnection;
+      }
+    } catch (entityError) {
+      console.error(`❌ Error with entity operations for ${userEmail}:`, entityError);
       
-      return connection;
-    } catch (error) {
-      // No existing connection, create new one
-      console.log(`🔄 Creating new Google Calendar connection for ${userEmail}`);
-      
-      const newConnection = await entity.initiateConnection({
-        appName: 'googlecalendar',
-        entity: entityId
-      });
-      
-      console.log(`🔗 Google Calendar connection URL for ${userEmail}:`, newConnection.redirectUrl);
-      
-      // Store pending connection info
-      userConnections.set(userEmail, {
-        entityId,
-        connectionId: newConnection.id,
-        redirectUrl: newConnection.redirectUrl,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
-      
-      return newConnection;
+      // Try alternative approach - create entity first
+      try {
+        console.log(`🔄 Attempting to create entity ${entityId} explicitly...`);
+        const newEntity = await toolset.client.createEntity(entityId);
+        console.log(`✅ Created new entity: ${entityId}`);
+        
+        // Now try to create connection
+        const newConnection = await newEntity.initiateConnection({
+          appName: 'googlecalendar',
+          entity: entityId
+        });
+        
+        console.log(`🔗 Google Calendar connection created for new entity ${userEmail}:`, newConnection.redirectUrl);
+        
+        // Store pending connection info
+        userConnections.set(userEmail, {
+          entityId,
+          connectionId: newConnection.id,
+          redirectUrl: newConnection.redirectUrl,
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        });
+        
+        return newConnection;
+      } catch (createError) {
+        console.error(`❌ Failed to create entity ${entityId}:`, createError);
+        throw createError;
+      }
     }
   } catch (error) {
     console.error(`❌ Error setting up connection for ${userEmail}:`, error);
+    
+    // Store error state
+    userConnections.set(userEmail, {
+      entityId: userEmail.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
+      status: 'error',
+      error: error.message,
+      createdAt: new Date().toISOString()
+    });
+    
     throw error;
   }
 }
 
-// Helper function to get user-specific tools
+// Helper function to get user-specific tools with better error handling
 async function getUserTools(userEmail) {
   try {
     const entityId = userEntities.get(userEmail);
@@ -95,13 +150,25 @@ async function getUserTools(userEmail) {
     
     console.log(`🛠️ Getting tools for user ${userEmail} with entity ${entityId}`);
     
+    // First check if entity exists and has connections
+    const entity = await toolset.client.getEntity(entityId);
+    const connections = await entity.getConnections();
+    
+    console.log(`📊 Entity ${entityId} has ${connections.length} connections`);
+    
+    if (connections.length === 0) {
+      console.warn(`⚠️ No connections found for entity ${entityId}, user needs to authenticate`);
+      return null;
+    }
+    
+    // Get tools with more specific action list
     const tools = await toolset.getTools({
       actions: [
-        'GOOGLECALENDAR_QUICK_ADD',
         'GOOGLECALENDAR_LIST_EVENTS',
         'GOOGLECALENDAR_CREATE_EVENT',
         'GOOGLECALENDAR_UPDATE_EVENT',
         'GOOGLECALENDAR_DELETE_EVENT',
+        'GOOGLECALENDAR_QUICK_ADD',
         'GOOGLECALENDAR_FIND_FREE_TIME',
         'GOOGLECALENDAR_GET_EVENT',
         'GOOGLECALENDAR_MOVE_EVENT',
@@ -113,11 +180,23 @@ async function getUserTools(userEmail) {
     return tools;
   } catch (error) {
     console.error(`❌ Error getting tools for ${userEmail}:`, error);
+    
+    // If it's a connection error, mark the user as needing reconnection
+    if (error.message.includes('Could not find a connection') || 
+        error.message.includes('No connection found')) {
+      const connectionData = userConnections.get(userEmail);
+      if (connectionData) {
+        connectionData.status = 'disconnected';
+        connectionData.error = 'Connection lost - needs re-authentication';
+        userConnections.set(userEmail, connectionData);
+      }
+    }
+    
     throw error;
   }
 }
 
-// Helper function to check if connection is active
+// Helper function to check if connection is active with better error handling
 async function checkConnectionStatus(userEmail) {
   try {
     const connectionData = userConnections.get(userEmail);
@@ -127,25 +206,97 @@ async function checkConnectionStatus(userEmail) {
       return { status: 'not_found', message: 'No connection found' };
     }
     
-    // Try to get tools to verify connection is working
-    const tools = await getUserTools(userEmail);
+    // If we have an error state, return it
+    if (connectionData.status === 'error') {
+      return { 
+        status: 'error', 
+        message: connectionData.error || 'Connection error',
+        needsSetup: true
+      };
+    }
     
-    if (tools && Object.keys(tools).length > 0) {
-      // Update status to active if tools are available
-      connectionData.status = 'active';
-      userConnections.set(userEmail, connectionData);
+    // If connection is pending, check if it's been completed
+    if (connectionData.status === 'pending') {
+      try {
+        // Check if the connection is now active
+        const entity = await toolset.client.getEntity(entityId);
+        const connections = await entity.getConnections();
+        
+        const activeConnection = connections.find(conn => 
+          conn.appName === 'googlecalendar' || 
+          conn.appName === 'GOOGLECALENDAR' ||
+          conn.app === 'googlecalendar'
+        );
+        
+        if (activeConnection) {
+          // Update status to active
+          connectionData.status = 'active';
+          connectionData.connectionId = activeConnection.id;
+          userConnections.set(userEmail, connectionData);
+          
+          return { 
+            status: 'active', 
+            message: 'Connection is active',
+            toolsAvailable: 9 // We have 9 Google Calendar tools
+          };
+        } else {
+          return { 
+            status: 'pending', 
+            message: 'Connection pending authentication',
+            redirectUrl: connectionData.redirectUrl
+          };
+        }
+      } catch (checkError) {
+        console.error(`❌ Error checking pending connection for ${userEmail}:`, checkError);
+        return { 
+          status: 'pending', 
+          message: 'Connection pending authentication',
+          redirectUrl: connectionData.redirectUrl
+        };
+      }
+    }
+    
+    // Try to get tools to verify connection is working
+    try {
+      const tools = await getUserTools(userEmail);
+      
+      if (tools && Object.keys(tools).length > 0) {
+        // Update status to active if tools are available
+        connectionData.status = 'active';
+        userConnections.set(userEmail, connectionData);
+        
+        return { 
+          status: 'active', 
+          message: 'Connection is active',
+          toolsAvailable: Object.keys(tools).length
+        };
+      } else {
+        return { 
+          status: 'disconnected', 
+          message: 'No tools available - connection may be inactive',
+          needsSetup: true
+        };
+      }
+    } catch (toolsError) {
+      console.error(`❌ Error getting tools for connection check ${userEmail}:`, toolsError);
+      
+      if (toolsError.message.includes('Could not find a connection')) {
+        return { 
+          status: 'disconnected', 
+          message: 'Connection not found - needs re-authentication',
+          needsSetup: true
+        };
+      }
       
       return { 
-        status: 'active', 
-        message: 'Connection is active',
-        toolsAvailable: Object.keys(tools).length
+        status: 'error', 
+        message: toolsError.message,
+        needsSetup: true
       };
-    } else {
-      return { status: 'pending', message: 'Connection pending authentication' };
     }
   } catch (error) {
     console.error(`❌ Error checking connection status for ${userEmail}:`, error);
-    return { status: 'error', message: error.message };
+    return { status: 'error', message: error.message, needsSetup: true };
   }
 }
 
@@ -211,7 +362,9 @@ app.post('/api/composio/setup-connection', async (req, res) => {
       status: connectionData?.status,
       message: connectionData?.status === 'pending' 
         ? `Please complete Google Calendar authentication using the redirect URL`
-        : `Google Calendar connection is active for ${userEmail}`,
+        : connectionData?.status === 'error'
+          ? `Connection setup failed: ${connectionData.error}`
+          : `Google Calendar connection is active for ${userEmail}`,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -269,27 +422,54 @@ app.post('/api/ai/send-message', async (req, res) => {
         response: {
           message: `Hi! Your Google Calendar connection is pending. Please complete the authentication process using the provided link.`,
           needsConnection: true,
-          redirectUrl: connectionData?.redirectUrl,
+          redirectUrl: connectionData?.redirectUrl || connectionStatus.redirectUrl,
           userEmail: userEmail
         },
         timestamp: new Date().toISOString()
       });
     }
     
-    if (connectionStatus.status === 'error') {
+    if (connectionStatus.status === 'error' || connectionStatus.status === 'disconnected') {
       return res.json({
         success: true,
         response: {
-          message: `There's an issue with your Google Calendar connection: ${connectionStatus.message}. Please try reconnecting.`,
+          message: `There's an issue with your Google Calendar connection: ${connectionStatus.message}. ${connectionStatus.needsSetup ? 'Please try reconnecting using the "Setup Connection" button.' : ''}`,
           needsConnection: true,
-          userEmail: userEmail
+          userEmail: userEmail,
+          needsSetup: connectionStatus.needsSetup
         },
         timestamp: new Date().toISOString()
       });
     }
     
     // Get user-specific Composio tools
-    const tools = await getUserTools(userEmail);
+    let tools;
+    try {
+      tools = await getUserTools(userEmail);
+      
+      if (!tools || Object.keys(tools).length === 0) {
+        return res.json({
+          success: true,
+          response: {
+            message: `I can help you with calendar planning, but I need access to your Google Calendar tools. Please complete the authentication process to enable full AI calendar management.`,
+            needsConnection: true,
+            userEmail: userEmail
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (toolsError) {
+      console.error(`❌ Error getting tools for ${userEmail}:`, toolsError);
+      return res.json({
+        success: true,
+        response: {
+          message: `I'm having trouble accessing your Google Calendar tools. This might be a temporary issue. Error: ${toolsError.message}`,
+          needsConnection: true,
+          userEmail: userEmail
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
     
     // Build comprehensive context for the AI agent
     const contextInfo = [];
@@ -422,7 +602,8 @@ app.get('/api/composio/connections', async (req, res) => {
       connectionId: conn.connectionId,
       status: conn.status,
       connectedAt: conn.connectedAt || conn.createdAt,
-      redirectUrl: conn.redirectUrl
+      redirectUrl: conn.redirectUrl,
+      error: conn.error
     }));
     
     res.json({
@@ -490,6 +671,7 @@ app.post('/api/composio/test-connection', async (req, res) => {
         userEmail,
         connectionData,
         connectionStatus: connectionStatus.status,
+        needsSetup: connectionStatus.needsSetup,
         timestamp: new Date().toISOString()
       });
     }
@@ -594,7 +776,7 @@ app.listen(PORT, () => {
   console.log('  POST /api/ai/send-message');
   console.log('  GET  /api/composio/connections');
   console.log('  POST /api/composio/test-connection');
-  console.log('  GET  /api/stats');
+  console.log('  GET /api/stats');
   console.log('');
   console.log('✅ Server is ready to handle requests!');
   console.log('🤖 OpenAI Agent with intelligent tool selection for calendar management');
