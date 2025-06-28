@@ -41,20 +41,42 @@ async function setupUserConnectionIfNotExists(userEmail) {
     console.log(`📝 Created entity ID: ${entityId} for user: ${userEmail}`);
     
     try {
-      // First, ensure the entity exists
-      const entity = await toolset.client.getEntity(entityId);
-      console.log(`✅ Entity ${entityId} exists or was created`);
+      // First, try to get or create the entity
+      let entity;
+      try {
+        entity = await toolset.client.getEntity(entityId);
+        console.log(`✅ Entity ${entityId} already exists`);
+      } catch (getEntityError) {
+        console.log(`🔄 Entity ${entityId} doesn't exist, creating...`);
+        try {
+          // Create the entity first
+          await toolset.client.createEntity(entityId);
+          entity = await toolset.client.getEntity(entityId);
+          console.log(`✅ Created and retrieved entity ${entityId}`);
+        } catch (createError) {
+          console.error(`❌ Failed to create entity ${entityId}:`, createError);
+          throw createError;
+        }
+      }
       
-      // Try to get existing connection
-      const connections = await entity.getConnections();
-      console.log(`🔍 Found ${connections.length} existing connections for entity ${entityId}`);
+      // Now check for existing connections
+      let connections = [];
+      try {
+        connections = await entity.getConnections();
+        console.log(`🔍 Found ${connections.length} existing connections for entity ${entityId}`);
+      } catch (connectionsError) {
+        console.log(`⚠️ Could not get connections for entity ${entityId}, assuming none exist`);
+        connections = [];
+      }
       
-      // Look for Google Calendar connection
-      const googleCalendarConnection = connections.find(conn => 
-        conn.appName === 'googlecalendar' || 
-        conn.appName === 'GOOGLECALENDAR' ||
-        conn.app === 'googlecalendar'
-      );
+      // Look for Google Calendar connection with various possible names
+      const googleCalendarConnection = connections.find(conn => {
+        const appName = (conn.appName || conn.app || '').toLowerCase();
+        return appName === 'googlecalendar' || 
+               appName === 'google_calendar' ||
+               appName === 'google-calendar' ||
+               appName === 'calendar';
+      });
       
       if (googleCalendarConnection) {
         console.log(`✅ Found existing Google Calendar connection for ${userEmail}:`, googleCalendarConnection.id);
@@ -71,16 +93,25 @@ async function setupUserConnectionIfNotExists(userEmail) {
       } else {
         console.log(`🔄 No existing Google Calendar connection found, creating new one for ${userEmail}`);
         
-        // Create new connection
-        const newConnection = await entity.initiateConnection({
+        // Create new connection with proper configuration
+        const connectionConfig = {
           appName: 'googlecalendar',
           entity: entityId,
           config: {
-            // Add any required configuration
+            // Add any required configuration for Google Calendar
+            scopes: ['https://www.googleapis.com/auth/calendar'],
           }
-        });
+        };
         
-        console.log(`🔗 Google Calendar connection initiated for ${userEmail}:`, newConnection.redirectUrl);
+        console.log(`🔗 Initiating connection with config:`, connectionConfig);
+        
+        const newConnection = await entity.initiateConnection(connectionConfig);
+        
+        console.log(`🔗 Google Calendar connection initiated for ${userEmail}:`, {
+          id: newConnection.id,
+          redirectUrl: newConnection.redirectUrl,
+          status: newConnection.status
+        });
         
         // Store pending connection info
         userConnections.set(userEmail, {
@@ -95,35 +126,7 @@ async function setupUserConnectionIfNotExists(userEmail) {
       }
     } catch (entityError) {
       console.error(`❌ Error with entity operations for ${userEmail}:`, entityError);
-      
-      // Try alternative approach - create entity first
-      try {
-        console.log(`🔄 Attempting to create entity ${entityId} explicitly...`);
-        const newEntity = await toolset.client.createEntity(entityId);
-        console.log(`✅ Created new entity: ${entityId}`);
-        
-        // Now try to create connection
-        const newConnection = await newEntity.initiateConnection({
-          appName: 'googlecalendar',
-          entity: entityId
-        });
-        
-        console.log(`🔗 Google Calendar connection created for new entity ${userEmail}:`, newConnection.redirectUrl);
-        
-        // Store pending connection info
-        userConnections.set(userEmail, {
-          entityId,
-          connectionId: newConnection.id,
-          redirectUrl: newConnection.redirectUrl,
-          status: 'pending',
-          createdAt: new Date().toISOString()
-        });
-        
-        return newConnection;
-      } catch (createError) {
-        console.error(`❌ Failed to create entity ${entityId}:`, createError);
-        throw createError;
-      }
+      throw entityError;
     }
   } catch (error) {
     console.error(`❌ Error setting up connection for ${userEmail}:`, error);
@@ -152,14 +155,36 @@ async function getUserTools(userEmail) {
     
     // First check if entity exists and has connections
     const entity = await toolset.client.getEntity(entityId);
-    const connections = await entity.getConnections();
+    let connections = [];
     
-    console.log(`📊 Entity ${entityId} has ${connections.length} connections`);
+    try {
+      connections = await entity.getConnections();
+      console.log(`📊 Entity ${entityId} has ${connections.length} connections`);
+    } catch (connectionsError) {
+      console.warn(`⚠️ Could not get connections for entity ${entityId}:`, connectionsError);
+      throw new Error(`No connections available for user ${userEmail}. Please complete the authentication process.`);
+    }
     
     if (connections.length === 0) {
       console.warn(`⚠️ No connections found for entity ${entityId}, user needs to authenticate`);
-      return null;
+      throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the authentication process.`);
     }
+    
+    // Check if we have an active Google Calendar connection
+    const googleConnection = connections.find(conn => {
+      const appName = (conn.appName || conn.app || '').toLowerCase();
+      return appName === 'googlecalendar' || 
+             appName === 'google_calendar' ||
+             appName === 'google-calendar' ||
+             appName === 'calendar';
+    });
+    
+    if (!googleConnection) {
+      console.warn(`⚠️ No Google Calendar connection found for entity ${entityId}`);
+      throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the Google Calendar authentication.`);
+    }
+    
+    console.log(`✅ Found Google Calendar connection for ${userEmail}:`, googleConnection.id);
     
     // Get tools with more specific action list
     const tools = await toolset.getTools({
@@ -183,7 +208,8 @@ async function getUserTools(userEmail) {
     
     // If it's a connection error, mark the user as needing reconnection
     if (error.message.includes('Could not find a connection') || 
-        error.message.includes('No connection found')) {
+        error.message.includes('No connection found') ||
+        error.message.includes('No Google Calendar connection')) {
       const connectionData = userConnections.get(userEmail);
       if (connectionData) {
         connectionData.status = 'disconnected';
@@ -203,7 +229,7 @@ async function checkConnectionStatus(userEmail) {
     const entityId = userEntities.get(userEmail);
     
     if (!connectionData || !entityId) {
-      return { status: 'not_found', message: 'No connection found' };
+      return { status: 'not_found', message: 'No connection found', needsSetup: true };
     }
     
     // If we have an error state, return it
@@ -222,11 +248,13 @@ async function checkConnectionStatus(userEmail) {
         const entity = await toolset.client.getEntity(entityId);
         const connections = await entity.getConnections();
         
-        const activeConnection = connections.find(conn => 
-          conn.appName === 'googlecalendar' || 
-          conn.appName === 'GOOGLECALENDAR' ||
-          conn.app === 'googlecalendar'
-        );
+        const activeConnection = connections.find(conn => {
+          const appName = (conn.appName || conn.app || '').toLowerCase();
+          return appName === 'googlecalendar' || 
+                 appName === 'google_calendar' ||
+                 appName === 'google-calendar' ||
+                 appName === 'calendar';
+        });
         
         if (activeConnection) {
           // Update status to active
@@ -243,7 +271,8 @@ async function checkConnectionStatus(userEmail) {
           return { 
             status: 'pending', 
             message: 'Connection pending authentication',
-            redirectUrl: connectionData.redirectUrl
+            redirectUrl: connectionData.redirectUrl,
+            needsSetup: false
           };
         }
       } catch (checkError) {
@@ -251,7 +280,8 @@ async function checkConnectionStatus(userEmail) {
         return { 
           status: 'pending', 
           message: 'Connection pending authentication',
-          redirectUrl: connectionData.redirectUrl
+          redirectUrl: connectionData.redirectUrl,
+          needsSetup: false
         };
       }
     }
@@ -280,10 +310,12 @@ async function checkConnectionStatus(userEmail) {
     } catch (toolsError) {
       console.error(`❌ Error getting tools for connection check ${userEmail}:`, toolsError);
       
-      if (toolsError.message.includes('Could not find a connection')) {
+      if (toolsError.message.includes('Could not find a connection') ||
+          toolsError.message.includes('No connection found') ||
+          toolsError.message.includes('No Google Calendar connection')) {
         return { 
           status: 'disconnected', 
-          message: 'Connection not found - needs re-authentication',
+          message: 'Google Calendar connection not found - needs authentication',
           needsSetup: true
         };
       }
@@ -350,6 +382,23 @@ app.post('/api/composio/setup-connection', async (req, res) => {
     
     console.log(`🔄 Setting up Composio connection for: ${userEmail}`);
     
+    // First, check if connection already exists and is working
+    const existingStatus = await checkConnectionStatus(userEmail);
+    if (existingStatus.status === 'active') {
+      console.log(`✅ Connection already active for ${userEmail}`);
+      const connectionData = userConnections.get(userEmail);
+      return res.json({
+        success: true,
+        userEmail,
+        entityId: connectionData?.entityId,
+        connectionId: connectionData?.connectionId,
+        status: 'active',
+        message: `Google Calendar connection is already active for ${userEmail}`,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Setup new connection
     const connection = await setupUserConnectionIfNotExists(userEmail);
     const connectionData = userConnections.get(userEmail);
     
@@ -400,8 +449,9 @@ app.post('/api/ai/send-message', async (req, res) => {
     
     console.log(`🤖 Processing AI message for ${userEmail}: "${message}"`);
     
-    // Check connection status
+    // Check connection status first
     const connectionStatus = await checkConnectionStatus(userEmail);
+    console.log(`📊 Connection status for ${userEmail}:`, connectionStatus);
     
     if (connectionStatus.status === 'not_found') {
       return res.json({
@@ -409,6 +459,7 @@ app.post('/api/ai/send-message', async (req, res) => {
         response: {
           message: `Hi! To manage your Google Calendar with AI, I need to connect to your account first. Please use the "Setup Connection" button to authenticate with Google Calendar through Composio.`,
           needsConnection: true,
+          needsSetup: true,
           userEmail: userEmail
         },
         timestamp: new Date().toISOString()
@@ -433,10 +484,10 @@ app.post('/api/ai/send-message', async (req, res) => {
       return res.json({
         success: true,
         response: {
-          message: `There's an issue with your Google Calendar connection: ${connectionStatus.message}. ${connectionStatus.needsSetup ? 'Please try reconnecting using the "Setup Connection" button.' : ''}`,
+          message: `There's an issue with your Google Calendar connection: ${connectionStatus.message}. ${connectionStatus.needsSetup ? 'Please use the "Setup Connection" button to fix this.' : ''}`,
           needsConnection: true,
-          userEmail: userEmail,
-          needsSetup: connectionStatus.needsSetup
+          needsSetup: connectionStatus.needsSetup,
+          userEmail: userEmail
         },
         timestamp: new Date().toISOString()
       });
@@ -453,18 +504,35 @@ app.post('/api/ai/send-message', async (req, res) => {
           response: {
             message: `I can help you with calendar planning, but I need access to your Google Calendar tools. Please complete the authentication process to enable full AI calendar management.`,
             needsConnection: true,
+            needsSetup: true,
             userEmail: userEmail
           },
           timestamp: new Date().toISOString()
         });
       }
+      
+      console.log(`✅ Successfully retrieved ${Object.keys(tools).length} tools for ${userEmail}`);
     } catch (toolsError) {
       console.error(`❌ Error getting tools for ${userEmail}:`, toolsError);
+      
+      // Provide specific error message based on the error type
+      let errorMessage = `I'm having trouble accessing your Google Calendar tools. `;
+      let needsSetup = true;
+      
+      if (toolsError.message.includes('No Google Calendar connection')) {
+        errorMessage += 'It looks like your Google Calendar connection needs to be set up. Please use the "Setup Connection" button to authenticate.';
+      } else if (toolsError.message.includes('No connections available')) {
+        errorMessage += 'Please complete the Google Calendar authentication process first.';
+      } else {
+        errorMessage += `Error: ${toolsError.message}`;
+      }
+      
       return res.json({
         success: true,
         response: {
-          message: `I'm having trouble accessing your Google Calendar tools. This might be a temporary issue. Error: ${toolsError.message}`,
+          message: errorMessage,
           needsConnection: true,
+          needsSetup: needsSetup,
           userEmail: userEmail
         },
         timestamp: new Date().toISOString()

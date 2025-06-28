@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, RefreshCw } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, RefreshCw, ExternalLink } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import composioService from '../../services/composioService';
@@ -34,7 +34,8 @@ export default function AiSidebar() {
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
   const [lastToolsUsed, setLastToolsUsed] = useState<number>(0);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isSettingUpConnection, setIsSettingUpConnection] = useState(false);
+  const [setupRedirectUrl, setSetupRedirectUrl] = useState<string | null>(null);
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -122,6 +123,7 @@ export default function AiSidebar() {
         setIsComposioConnected(true);
         setConnectionStatus(testResult.testResult.connectionStatus);
         setComposioConnectionError(null);
+        setSetupRedirectUrl(null);
         console.log(`✅ AI agent connection active for ${userEmail}`);
       } else {
         setIsComposioConnected(false);
@@ -129,8 +131,9 @@ export default function AiSidebar() {
         
         // Check if this is a connection issue that can be fixed
         if (testResult.error?.includes('Could not find a connection') || 
-            testResult.error?.includes('No connection found')) {
-          setComposioConnectionError('AI agent connection lost. Click "Reconnect" to restore access.');
+            testResult.error?.includes('No connection found') ||
+            testResult.error?.includes('No Google Calendar connection')) {
+          setComposioConnectionError('AI agent needs Google Calendar connection. Click "Setup Connection" to authenticate.');
         } else {
           setComposioConnectionError(testResult.error || 'AI agent connection not found');
         }
@@ -146,66 +149,106 @@ export default function AiSidebar() {
     }
   };
 
-  const handleReconnectComposio = async () => {
+  const handleSetupConnection = async () => {
     const userEmail = getAuthenticatedUserEmail();
     if (!userEmail) {
       setComposioConnectionError('Email verification required for AI agent features');
       return;
     }
 
-    setIsReconnecting(true);
+    setIsSettingUpConnection(true);
     setComposioConnectionError(null);
+    setSetupRedirectUrl(null);
 
     try {
-      console.log(`🔄 Reconnecting Composio for user: ${userEmail}`);
+      console.log(`🔗 Setting up Composio connection for user: ${userEmail}`);
       
       const result = await composioService.setupUserConnection(userEmail);
       
       if (result.success) {
         if (result.redirectUrl) {
-          // User needs to authenticate with Google Calendar
+          // User needs to authenticate with Google Calendar via Composio
+          setSetupRedirectUrl(result.redirectUrl);
+          
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
-              id: `composio_reconnect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🔄 I'm reconnecting your AI agent for ${userEmail}. Please complete the Google Calendar authentication using this link: ${result.redirectUrl}
+              content: `🔗 Great! I'm setting up your AI agent for ${userEmail}. Please complete the Google Calendar authentication using the link below. This will give me access to your calendar through Composio tools.
 
-Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands again!`,
+Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands!`,
               timestamp: new Date().toISOString(),
             },
           });
-
-          // Open the redirect URL
-          window.open(result.redirectUrl, '_blank');
         } else {
-          // Connection already exists or was restored
+          // Connection already exists or was created successfully
           setIsComposioConnected(true);
           setConnectionStatus(result.status || 'active');
           
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
-              id: `composio_restored_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🎉 Perfect! Your AI agent connection for ${userEmail} has been restored. I can now manage your Google Calendar using AI commands again. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              content: `🎉 Perfect! Your AI agent connection for ${userEmail} is now active. I can manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
               timestamp: new Date().toISOString(),
             },
           });
+          
+          // Refresh connection status
+          setTimeout(() => {
+            checkServerAndConnections();
+          }, 2000);
         }
-        
-        // Refresh connection status
-        setTimeout(() => {
-          checkServerAndConnections();
-        }, 2000);
       } else {
-        setComposioConnectionError(result.error || 'Failed to reconnect AI agent');
+        setComposioConnectionError(result.error || 'Failed to setup AI agent connection');
       }
     } catch (error) {
-      console.error('❌ Error reconnecting Composio:', error);
-      setComposioConnectionError('Failed to reconnect AI agent');
+      console.error('❌ Error setting up Composio connection:', error);
+      setComposioConnectionError('Failed to setup AI agent connection');
     } finally {
-      setIsReconnecting(false);
+      setIsSettingUpConnection(false);
+    }
+  };
+
+  const handleOpenAuthUrl = () => {
+    if (setupRedirectUrl) {
+      window.open(setupRedirectUrl, '_blank');
+      
+      // Start polling to check if connection is complete
+      const pollInterval = setInterval(async () => {
+        try {
+          const userEmail = getAuthenticatedUserEmail();
+          if (userEmail) {
+            const testResult = await composioService.testUserConnection(userEmail);
+            if (testResult.success && testResult.testResult) {
+              clearInterval(pollInterval);
+              setIsComposioConnected(true);
+              setConnectionStatus('active');
+              setComposioConnectionError(null);
+              setSetupRedirectUrl(null);
+              
+              dispatch({
+                type: 'ADD_CHAT_MESSAGE',
+                payload: {
+                  id: `composio_complete_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'ai',
+                  content: `🎉 Excellent! Your AI agent is now connected and ready. I have access to your Google Calendar tools and can help you manage your schedule intelligently.`,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+          }
+        } catch (error) {
+          // Continue polling
+        }
+      }, 3000);
+      
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+      }, 5 * 60 * 1000);
     }
   };
 
@@ -262,36 +305,22 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
 
         // Check if user needs to setup connection
         if (response.response.needsConnection) {
-          if (response.response.redirectUrl) {
-            // Add message with redirect URL
-            dispatch({
-              type: 'ADD_CHAT_MESSAGE',
-              payload: {
-                id: `ai_redirect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                type: 'ai',
-                content: `${response.response.message}\n\nClick here to authenticate: ${response.response.redirectUrl}`,
-                timestamp: new Date().toISOString(),
-              },
-            });
-          } else {
-            // Add message suggesting connection setup
-            let aiMessage = response.response.message;
-            
-            // If this is a connection issue, suggest reconnection
-            if (response.response.needsSetup) {
-              aiMessage += '\n\n💡 Try using the "Reconnect AI Agent" button in the settings to restore your connection.';
-            }
-            
-            dispatch({
-              type: 'ADD_CHAT_MESSAGE',
-              payload: {
-                id: `ai_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                type: 'ai',
-                content: aiMessage,
-                timestamp: new Date().toISOString(),
-              },
-            });
+          let aiMessage = response.response.message;
+          
+          // If this is a setup issue, suggest using the setup button
+          if (response.response.needsSetup) {
+            aiMessage += '\n\n💡 Use the "Setup Connection" button below to connect your Google Calendar with the AI agent.';
           }
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `ai_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: aiMessage,
+              timestamp: new Date().toISOString(),
+            },
+          });
         } else {
           // Normal AI agent response
           let aiMessage = response.response.message;
@@ -395,7 +424,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           payload: {
             id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `❌ AI agent connection test failed for ${userEmail}: ${result.error}. Try using the "Reconnect AI Agent" button to restore your connection.`,
+            content: `❌ AI agent connection test failed for ${userEmail}: ${result.error}. Try using the "Setup Connection" button to establish your connection.`,
             timestamp: new Date().toISOString(),
           },
         });
@@ -449,7 +478,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
                 <span className={`text-xs ${
                   state.isDarkMode ? 'text-red-400' : 'text-red-600'
                 }`}>
-                  {hasValidEmail ? 'Offline' : 'Limited'}
+                  {hasValidEmail ? 'Setup Needed' : 'Limited'}
                 </span>
               </>
             )}
@@ -471,7 +500,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
               {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
             </div>
             {hasValidEmail ? (
-              <div className="text-green-500 mt-1">✓ Email verified - AI agent with full tools access</div>
+              <div className="text-green-500 mt-1">✓ Email verified - AI agent ready for setup</div>
             ) : (
               <div className="text-orange-500 mt-1">⚠️ Email verification needed for AI agent</div>
             )}
@@ -507,18 +536,35 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
                   >
                     Retry check
                   </button>
-                  {hasValidEmail && composioConnectionError.includes('connection lost') && (
-                    <button 
-                      onClick={handleReconnectComposio}
-                      disabled={isReconnecting}
-                      className={`text-xs underline hover:no-underline ${
-                        state.isDarkMode ? 'text-blue-400' : 'text-blue-600'
-                      } ${isReconnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      {isReconnecting ? 'Reconnecting...' : 'Reconnect'}
-                    </button>
-                  )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Setup Authentication URL */}
+        {setupRedirectUrl && (
+          <div className={`mt-3 p-3 rounded-md text-sm ${
+            state.isDarkMode 
+              ? 'bg-blue-900/30 text-blue-300 border border-blue-800' 
+              : 'bg-blue-50 text-blue-700 border border-blue-200'
+          }`}>
+            <div className="flex items-start space-x-2">
+              <ExternalLink className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="font-medium mb-2">Complete Authentication</div>
+                <p className="text-xs mb-3">Click the button below to authenticate your Google Calendar with the AI agent:</p>
+                <button
+                  onClick={handleOpenAuthUrl}
+                  className={`w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    state.isDarkMode
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-blue-500 text-white hover:bg-blue-600'
+                  }`}
+                >
+                  <ExternalLink className="h-3 w-3 inline mr-1" />
+                  Open Authentication Page
+                </button>
               </div>
             </div>
           </div>
@@ -682,7 +728,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              AI Agent Status
+              AI Agent Setup
             </h3>
           </div>
           <button
@@ -699,21 +745,21 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
 
         {showComposioSettings && (
           <div className="space-y-3 mb-3">
-            {/* Reconnect Button */}
+            {/* Setup Connection Button */}
             {state.user?.email && hasValidEmail && !isComposioConnected && (
               <button
-                onClick={handleReconnectComposio}
-                disabled={isReconnecting || !serverAvailable}
+                onClick={handleSetupConnection}
+                disabled={isSettingUpConnection || !serverAvailable}
                 className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
-                  isReconnecting || !serverAvailable
+                  isSettingUpConnection || !serverAvailable
                     ? 'opacity-50 cursor-not-allowed'
                     : state.isDarkMode
                     ? 'bg-green-600 text-white hover:bg-green-700'
                     : 'bg-green-500 text-white hover:bg-green-600'
                 }`}
               >
-                <RefreshCw className={`h-3 w-3 ${isReconnecting ? 'animate-spin' : ''}`} />
-                <span>{isReconnecting ? 'Reconnecting...' : 'Reconnect AI Agent'}</span>
+                <Link className={`h-3 w-3 ${isSettingUpConnection ? 'animate-spin' : ''}`} />
+                <span>{isSettingUpConnection ? 'Setting up...' : 'Setup Connection'}</span>
               </button>
             )}
 
@@ -763,14 +809,14 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
             <Brain className="h-3 w-3" />
             <span className="font-medium">
               {isComposioConnected && hasValidEmail ? 'AI Agent Active' : 
-               hasValidEmail ? 'Agent Connection Issue' : 'Email Verification Needed'}
+               hasValidEmail ? 'Setup Required' : 'Email Verification Needed'}
             </span>
           </div>
           <p>
             {isComposioConnected && hasValidEmail
               ? `Your OpenAI agent (${displayUserEmail}) has access to Google Calendar tools and can intelligently decide which ones to use for your requests.`
               : hasValidEmail
-                ? `Your AI agent connection needs to be restored. Use the "Reconnect AI Agent" button to fix this.`
+                ? `Your AI agent needs to be connected to Google Calendar. Use the "Setup Connection" button to authenticate.`
                 : `Email verification is required for the AI agent with Google Calendar tools. Basic calendar features are available.`
             }
           </p>
