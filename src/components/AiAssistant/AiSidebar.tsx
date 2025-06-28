@@ -88,6 +88,25 @@ export default function AiSidebar() {
     return null;
   }, [state.user?.email, isValidRealEmail]);
 
+  // Helper function to prepare chat conversation context
+  const prepareChatContext = useCallback(() => {
+    const maxMessages = 20; // Send last 20 messages for context
+    const recentMessages = state.chatMessages.slice(-maxMessages);
+    
+    // Format messages for the AI agent
+    const conversationHistory = recentMessages.map(msg => ({
+      role: msg.type === 'user' ? 'user' : 'assistant',
+      content: msg.content,
+      timestamp: msg.timestamp
+    }));
+
+    return {
+      conversationHistory,
+      messageCount: recentMessages.length,
+      totalMessages: state.chatMessages.length
+    };
+  }, [state.chatMessages]);
+
   // Check server availability and connections - debounced to prevent excessive calls
   const checkServerAndConnections = useCallback(async () => {
     // Prevent overlapping connection checks
@@ -457,11 +476,22 @@ export default function AiSidebar() {
     try {
       console.log(`🤖 Sending message to OpenAI agent for validated user: ${userEmail}`);
       
-      // Send message to OpenAI agent with Composio tools
+      // Prepare enhanced context with conversation history
+      const chatContext = prepareChatContext();
+      
+      // Send message to OpenAI agent with Composio tools and conversation context
       const response = await composioService.sendMessage(userMessage, userEmail, {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
+        // Add conversation history to context
+        conversationHistory: chatContext.conversationHistory,
+        conversationMetadata: {
+          messageCount: chatContext.messageCount,
+          totalMessages: chatContext.totalMessages,
+          userEmail: userEmail,
+          timestamp: new Date().toISOString()
+        }
       });
 
       if (response.success && response.response) {
@@ -495,6 +525,11 @@ export default function AiSidebar() {
           // Add tool usage info if tools were used
           if (response.response.toolsUsed && response.response.toolsUsed > 0) {
             aiMessage += `\n\n🔧 *I used ${response.response.toolsUsed} Google Calendar tool${response.response.toolsUsed > 1 ? 's' : ''} to help you with this request.*`;
+          }
+
+          // Add conversation context info for debugging (only in development)
+          if (import.meta.env.DEV && chatContext.messageCount > 0) {
+            aiMessage += `\n\n*[Context: ${chatContext.messageCount} recent messages provided]*`;
           }
 
           dispatch({
@@ -693,6 +728,10 @@ export default function AiSidebar() {
             {isComposioConnected && hasValidEmail && (
               <div className="text-purple-500 mt-1">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
             )}
+            {/* Chat Context Info */}
+            {state.chatMessages.length > 0 && (
+              <div className="text-blue-500 mt-1">💬 {state.chatMessages.length} messages in conversation</div>
+            )}
           </div>
         )}
         
@@ -869,7 +908,7 @@ export default function AiSidebar() {
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">AI agent is analyzing your request...</span>
+                  <span className="text-xs opacity-70">AI agent is analyzing your request with conversation context...</span>
                 </div>
               </div>
             </div>
@@ -937,7 +976,12 @@ export default function AiSidebar() {
             ) : !hasValidEmail ? (
               <p>📧 Email verification needed for AI agent features</p>
             ) : (
-              <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
+              <div>
+                <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
+                {state.chatMessages.length > 0 && (
+                  <p className="mt-1 opacity-75">💬 Conversation context: {Math.min(state.chatMessages.length, 20)} recent messages</p>
+                )}
+              </div>
             )}
           </div>
         </div>

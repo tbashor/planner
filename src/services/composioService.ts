@@ -137,7 +137,7 @@ class ComposioService {
   }
 
   /**
-   * Send message to AI with user-specific Composio tools
+   * Send message to AI with user-specific Composio tools and conversation context
    */
   async sendMessage(
     message: string,
@@ -146,6 +146,17 @@ class ComposioService {
       events?: UserCalendarEvent[];
       preferences?: UserPreferencesContext;
       currentDate?: Date;
+      conversationHistory?: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+        timestamp: string;
+      }>;
+      conversationMetadata?: {
+        messageCount: number;
+        totalMessages: number;
+        userEmail: string;
+        timestamp: string;
+      };
     }
   ): Promise<AIMessageResponse> {
     if (!message.trim()) {
@@ -157,6 +168,7 @@ class ComposioService {
     }
 
     console.log(`💬 Sending AI message for user ${userEmail}: "${message}"`);
+    console.log(`📝 Conversation context: ${context?.conversationHistory?.length || 0} messages`);
 
     return this.makeRequest('/api/ai/send-message', {
       method: 'POST',
