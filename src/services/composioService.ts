@@ -68,7 +68,7 @@ class ComposioService {
   }
 
   /**
-   * Make a request to the server API
+   * Make a request to the server API with improved error handling
    */
   private async makeRequest<T>(
     endpoint: string, 
@@ -79,13 +79,20 @@ class ComposioService {
       
       console.log('📤 Making Composio request to:', url);
       
+      // Add timeout to prevent hanging requests
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
       const response = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
           ...options.headers,
         },
+        signal: controller.signal,
         ...options,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -97,6 +104,17 @@ class ComposioService {
       return result;
     } catch (error) {
       console.error(`❌ Composio API request failed (${endpoint}):`, error);
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          throw new Error('Request timed out - server may be unresponsive');
+        }
+        if (error.message.includes('Failed to fetch')) {
+          throw new Error('Cannot connect to server - please ensure the backend is running');
+        }
+      }
+      
       throw error;
     }
   }
@@ -209,11 +227,13 @@ class ComposioService {
   }
 
   /**
-   * Check if server is available
+   * Check if server is available with better error handling
    */
   async isServerAvailable(): Promise<boolean> {
     try {
+      console.log('🔍 Checking server availability...');
       await this.makeRequest('/api/health');
+      console.log('✅ Server is available');
       return true;
     } catch (error) {
       console.warn('⚠️ Composio server is not available:', error);
