@@ -1,202 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Settings, Moon, Sun, RotateCcw, Calendar, BellRing, Shield, Sparkles, Trash2, Save, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react';
+import { Search, Bell, Settings, Moon, Sun, RotateCcw, Calendar, BellRing, Sparkles, Trash2, Save, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { oauthService } from '../services/oauthService';
-import { googleCalendarService } from '../services/googleCalendarService';
+import { useAuth } from '../contexts/AuthContext';
 import { generatePersonalizedSuggestions } from '../utils/aiUtils';
 
 export default function Header() {
   const { state, dispatch } = useApp();
+  const { authState, checkConnectionStatus, signOut } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
-  const [authStatus, setAuthStatus] = useState<{
-    isAuthenticated: boolean;
-    isExpired: boolean;
-    needsRefresh: boolean;
-    isRefreshing: boolean;
-    lastChecked: number;
-  }>({
-    isAuthenticated: false,
-    isExpired: false,
-    needsRefresh: false,
-    isRefreshing: false,
-    lastChecked: 0,
-  });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
-  const profileMenuRef = useRef<HTMLDivElement>(null);
 
-  // Authentication status monitoring
-  const checkAuthenticationStatus = async () => {
-    try {
-      const now = Date.now();
-      
-      // Skip if checked recently (within 30 seconds), unless this is initial load
-      if (now - authStatus.lastChecked < 30000 && authStatus.lastChecked > 0) {
-        return;
-      }
-
-      // Check if we're returning from OAuth callback
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
-      const state = urlParams.get('state');
-      
-      if (code && state) {
-        console.log('🔄 OAuth callback detected in header, processing...');
-        try {
-          await oauthService.exchangeCodeForTokens(code, state);
-          console.log('✅ OAuth tokens processed successfully');
-          
-          // Clear URL parameters
-          window.history.replaceState({}, document.title, window.location.pathname);
-          
-          // Add success message
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: `auth_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              type: 'ai',
-              content: '✅ Google Calendar authentication successful! Your connection has been restored.',
-              timestamp: new Date().toISOString(),
-            },
-          });
-        } catch (error) {
-          console.error('❌ OAuth callback processing failed:', error);
-          
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: `auth_callback_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              type: 'ai',
-              content: '❌ Authentication callback failed. Please try re-authenticating again.',
-              timestamp: new Date().toISOString(),
-            },
-          });
-        }
-      }
-
-      const isAuthenticated = oauthService.isAuthenticated();
-      const tokens = oauthService.getStoredTokens();
-      
-      let isExpired = false;
-      let needsRefresh = false;
-
-      if (tokens) {
-        const tokenData = tokens as unknown as { expires_at?: number };
-        const expiresAt = tokenData.expires_at;
-        if (expiresAt) {
-          isExpired = Date.now() >= expiresAt;
-          // Need refresh if expires within 10 minutes
-          needsRefresh = Date.now() >= (expiresAt - 10 * 60 * 1000);
-        }
-      }
-
-      setAuthStatus({
-        isAuthenticated,
-        isExpired,
-        needsRefresh,
-        isRefreshing: false,
-        lastChecked: now,
-      });
-
-      // Automatically try to refresh if needed and not already refreshing
-      if (needsRefresh && !authStatus.isRefreshing && tokens && (tokens as unknown as { refresh_token?: string }).refresh_token) {
-        attemptTokenRefresh();
-      }
-    } catch (error) {
-      console.error('❌ Error checking authentication status:', error);
+  // Check Composio authentication status
+  const refreshAuthenticationStatus = async () => {
+    if (authState.userEmail) {
+      await checkConnectionStatus(authState.userEmail);
     }
   };
 
-  const attemptTokenRefresh = async () => {
-    try {
-      setAuthStatus(prev => ({ ...prev, isRefreshing: true }));
-      
-      const refreshedTokens = await oauthService.refreshAccessToken();
-      
-      if (refreshedTokens) {
-        console.log('✅ Tokens refreshed successfully');
-        
-        // Update auth status
-        setAuthStatus(prev => ({
-          ...prev,
-          isAuthenticated: true,
-          isExpired: false,
-          needsRefresh: false,
-          isRefreshing: false,
-          lastChecked: Date.now(),
-        }));
-
-        // Add success message to chat
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: `auth_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'ai',
-            content: '🔄 Authentication refreshed automatically. Your Google Calendar connection is active.',
-            timestamp: new Date().toISOString(),
-          },
-        });
-      } else {
-        throw new Error('Token refresh failed');
-      }
-    } catch (error) {
-      console.error('❌ Token refresh failed:', error);
-      
-      setAuthStatus(prev => ({
-        ...prev,
-        isAuthenticated: false,
-        isExpired: true,
-        needsRefresh: true,
-        isRefreshing: false,
-        lastChecked: Date.now(),
-      }));
-
-      // Add warning message to chat
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `auth_warning_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: '⚠️ Your Google Calendar authentication has expired. Please re-authenticate using the settings menu to restore full functionality.',
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
-  };
-
-  const handleManualReauth = async () => {
-    try {
-      console.log('🔄 Starting manual re-authentication...');
-      
-      // Add message about starting re-auth
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `reauth_start_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: '🔄 Starting re-authentication process. You\'ll be redirected to Google to confirm your access.',
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      const authUrl = await googleCalendarService.getAuthUrl();
-      window.location.href = authUrl;
-    } catch (error) {
-      console.error('❌ Error starting re-authentication:', error);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: `reauth_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'ai',
-          content: '❌ Failed to start re-authentication. Please try again or contact support if the issue persists.',
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
+  const handleManualReauth = () => {
+    // For Composio authentication, redirect to re-onboarding
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: `reauth_start_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai',
+        content: '🔄 To re-authenticate, please clear your current session and go through onboarding again with your Google account.',
+        timestamp: new Date().toISOString(),
+      },
+    });
     
+    // Clear the authentication and trigger onboarding
+    signOut();
     setShowSettingsMenu(false);
   };
 
@@ -233,7 +69,7 @@ export default function Header() {
     ];
     
     keysToRemove.forEach(key => localStorage.removeItem(key));
-    console.log('🧹 Cleared app data while preserving OAuth tokens');
+    console.log('🧹 Cleared app data while preserving Composio authentication');
 
     if (keepAiEvents && aiEvents.length > 0) {
       // Save AI events to be restored after reset
@@ -270,13 +106,12 @@ export default function Header() {
 
   const handleReconnectGoogleCalendar = () => {
     const confirmReconnect = window.confirm(
-      'This will disconnect your current Google Calendar and start a new connection. Continue?'
+      'This will disconnect your current Google Calendar connection and clear your authentication. You\'ll need to go through onboarding again. Continue?'
     );
     
     if (confirmReconnect) {
-      // Clear existing Google Calendar connection
-      oauthService.clearTokens();
-      googleCalendarService.signOut();
+      // Clear Composio authentication
+      signOut();
       
       // Remove Google Calendar events from state
       const nonGoogleEvents = state.events.filter(event => !event.id.startsWith('google_'));
@@ -288,7 +123,7 @@ export default function Header() {
         payload: {
           id: `reconnect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: '🔄 Google Calendar has been disconnected. You can now connect a different Google account through the AI sidebar.',
+          content: '🔄 Google Calendar has been disconnected. Please complete onboarding again to reconnect your Google account.',
           timestamp: new Date().toISOString(),
         },
       });
@@ -359,23 +194,26 @@ export default function Header() {
 
   // Authentication status monitoring
   useEffect(() => {
-    // Check immediately on mount
-    checkAuthenticationStatus();
+    // Check on mount if we have a user email
+    if (authState.userEmail) {
+      refreshAuthenticationStatus();
+    }
     
     // Set up interval to check authentication status periodically
-    const authCheckInterval = setInterval(checkAuthenticationStatus, 60000); // Check every minute
+    const authCheckInterval = setInterval(() => {
+      if (authState.userEmail) {
+        refreshAuthenticationStatus();
+      }
+    }, 60000); // Check every minute
     
     return () => clearInterval(authCheckInterval);
-  }, []); // Empty dependency array to only run on mount
+  }, [authState.userEmail]); 
 
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target as Node)) {
         setShowSettingsMenu(false);
-      }
-      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
-        setShowProfileMenu(false);
       }
     };
 
@@ -385,7 +223,7 @@ export default function Header() {
     };
   }, []);
 
-  const isGoogleCalendarConnected = oauthService.isAuthenticated();
+  const isGoogleCalendarConnected = authState.isAuthenticated && authState.connectionStatus === 'connected';
   const aiEventCount = state.events.filter(event => 
     event.id.startsWith('ai_event_') || 
     event.description?.includes('Created by AI assistant') ||
@@ -439,35 +277,35 @@ export default function Header() {
 
             {/* Right Side Actions */}
             <div className="flex items-center space-x-4">
-              {/* Authentication Status Indicator */}
-              {authStatus.isExpired && (
+              {/* Authentication Status Indicators */}
+              {authState.connectionStatus === 'error' && (
                 <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
                   state.isDarkMode 
                     ? 'bg-red-900 bg-opacity-30 text-red-400' 
                     : 'bg-red-100 text-red-700'
                 }`}>
                   <AlertTriangle className="h-3 w-3" />
-                  <span>Auth Expired</span>
+                  <span>Connection Error</span>
                 </div>
               )}
-              {authStatus.needsRefresh && !authStatus.isExpired && (
-                <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
-                  state.isDarkMode 
-                    ? 'bg-yellow-900 bg-opacity-30 text-yellow-400' 
-                    : 'bg-yellow-100 text-yellow-700'
-                }`}>
-                  <AlertTriangle className="h-3 w-3" />
-                  <span>Auth Expires Soon</span>
-                </div>
-              )}
-              {authStatus.isRefreshing && (
+              {authState.connectionStatus === 'checking' && (
                 <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
                   state.isDarkMode 
                     ? 'bg-blue-900 bg-opacity-30 text-blue-400' 
                     : 'bg-blue-100 text-blue-700'
                 }`}>
                   <RefreshCw className="h-3 w-3 animate-spin" />
-                  <span>Refreshing...</span>
+                  <span>Checking...</span>
+                </div>
+              )}
+              {authState.connectionStatus === 'disconnected' && !authState.isLoading && (
+                <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
+                  state.isDarkMode 
+                    ? 'bg-yellow-900 bg-opacity-30 text-yellow-400' 
+                    : 'bg-yellow-100 text-yellow-700'
+                }`}>
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>Disconnected</span>
                 </div>
               )}
 
@@ -506,249 +344,115 @@ export default function Header() {
                 </button>
 
                 {showSettingsMenu && (
-                  <div className={`absolute right-0 mt-2 w-72 rounded-lg shadow-lg py-1 z-50 border ${
-                    state.isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
+                  <div className={`absolute right-0 mt-2 w-80 rounded-lg shadow-lg border z-50 ${
+                    state.isDarkMode 
+                      ? 'bg-gray-800 border-gray-700' 
+                      : 'bg-white border-gray-200'
                   }`}>
-                    {/* Settings Header */}
-                    <div className={`px-4 py-3 border-b ${
-                      state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-                    }`}>
-                      <h3 className={`text-sm font-semibold ${
-                        state.isDarkMode ? 'text-white' : 'text-gray-900'
-                      }`}>
-                        Settings
-                      </h3>
-                      <p className={`text-xs ${
-                        state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                      }`}>
-                        Manage your preferences and connections
-                      </p>
-                    </div>
-
-                    {/* Reset Preferences */}
-                    <button
-                      onClick={resetOnboarding}
-                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
-                        state.isDarkMode 
-                          ? 'text-yellow-400 hover:bg-gray-700' 
-                          : 'text-yellow-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      <div>
-                        <div className="font-medium">Reset Preferences</div>
-                        <div className={`text-xs ${
-                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
+                    <div className="py-2">
+                      {/* Connection Status */}
+                      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                        <h3 className={`text-sm font-medium ${
+                          state.isDarkMode ? 'text-white' : 'text-gray-900'
                         }`}>
-                          Restart onboarding with event management options
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Refresh AI Suggestions */}
-                    <button
-                      onClick={refreshAiSuggestions}
-                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
-                        state.isDarkMode 
-                          ? 'text-purple-400 hover:bg-gray-700' 
-                          : 'text-purple-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <Sparkles className="h-4 w-4" />
-                      <div>
-                        <div className="font-medium">Refresh AI Suggestions</div>
-                        <div className={`text-xs ${
-                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
-                        }`}>
-                          Generate new suggestions based on current preferences
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Google Calendar Connection with Authentication Status */}
-                    <div className={`px-4 py-3 border-b ${
-                      state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-                    }`}>
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center space-x-2">
-                          <Calendar className="h-4 w-4" />
-                          <span className={`font-medium ${
-                            state.isDarkMode ? 'text-white' : 'text-gray-900'
-                          }`}>
-                            Google Calendar
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          {authStatus.isRefreshing && (
-                            <RefreshCw className="h-3 w-3 text-blue-500 animate-spin" />
+                          Connection Status
+                        </h3>
+                        <div className="mt-2 space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className={`flex items-center ${
+                              state.isDarkMode ? 'text-gray-300' : 'text-gray-600'
+                            }`}>
+                              <Calendar className="h-3 w-3 mr-1" />
+                              Google Calendar
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-xs ${
+                              isGoogleCalendarConnected
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            }`}>
+                              {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}
+                            </span>
+                          </div>
+                          {authState.userEmail && (
+                            <div className={`text-xs ${
+                              state.isDarkMode ? 'text-gray-400' : 'text-gray-500'
+                            }`}>
+                              {authState.userEmail}
+                            </div>
                           )}
-                          {authStatus.isAuthenticated && !authStatus.isExpired && (
-                            <Shield className="h-3 w-3 text-green-500" />
-                          )}
-                          {authStatus.isExpired && (
-                            <AlertTriangle className="h-3 w-3 text-red-500" />
-                          )}
-                          {authStatus.needsRefresh && !authStatus.isExpired && (
-                            <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                          {authState.error && (
+                            <div className="text-xs text-red-600 dark:text-red-400">
+                              {authState.error}
+                            </div>
                           )}
                         </div>
-                      </div>
-                      
-                      <div className={`text-xs mb-3 ${
-                        state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                      }`}>
-                        {authStatus.isRefreshing 
-                          ? 'Refreshing authentication...'
-                          : authStatus.isExpired
-                            ? 'Authentication expired - click to re-authenticate'
-                            : authStatus.needsRefresh
-                              ? 'Authentication expires soon - will auto-refresh'
-                              : authStatus.isAuthenticated
-                                ? 'Connected and authenticated'
-                                : 'Not connected'
-                        }
                       </div>
 
-                      <div className="space-y-2">
-                        {/* Re-authenticate button (shown when expired) */}
-                        {authStatus.isExpired && (
+                      {/* Settings Options */}
+                      <div className="py-1">
+                        {!isGoogleCalendarConnected && (
                           <button
                             onClick={handleManualReauth}
-                            disabled={authStatus.isRefreshing}
-                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
-                              authStatus.isRefreshing
-                                ? 'opacity-50 cursor-not-allowed'
-                                : state.isDarkMode 
-                                  ? 'text-red-400 hover:bg-gray-700 bg-red-900 bg-opacity-20' 
-                                  : 'text-red-600 hover:bg-red-50 bg-red-50'
-                            }`}
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            <span>Re-authenticate with Google</span>
-                          </button>
-                        )}
-
-                        {/* Reconnect to different account (shown when authenticated) */}
-                        {authStatus.isAuthenticated && !authStatus.isExpired && (
-                          <button
-                            onClick={handleReconnectGoogleCalendar}
-                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
+                            className={`w-full px-4 py-2 text-left text-sm flex items-center hover:bg-opacity-80 transition-colors duration-200 ${
                               state.isDarkMode 
                                 ? 'text-blue-400 hover:bg-gray-700' 
-                                : 'text-blue-600 hover:bg-blue-50'
+                                : 'text-blue-600 hover:bg-gray-50'
                             }`}
                           >
-                            <RotateCcw className="h-3 w-3" />
-                            <span>Connect different account</span>
+                            <RefreshCw className="h-4 w-4 mr-2" />
+                            Re-authenticate
                           </button>
                         )}
+                        
+                        <button
+                          onClick={refreshAiSuggestions}
+                          className={`w-full px-4 py-2 text-left text-sm flex items-center hover:bg-opacity-80 transition-colors duration-200 ${
+                            state.isDarkMode 
+                              ? 'text-gray-300 hover:bg-gray-700' 
+                              : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Refresh AI Suggestions
+                        </button>
 
-                        {/* First time connection (shown when not connected) */}
-                        {!authStatus.isAuthenticated && !authStatus.isExpired && (
-                          <button
-                            onClick={handleManualReauth}
-                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
-                              state.isDarkMode 
-                                ? 'text-green-400 hover:bg-gray-700' 
-                                : 'text-green-600 hover:bg-green-50'
-                            }`}
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            <span>Connect Google Calendar</span>
-                          </button>
-                        )}
+                        <button
+                          onClick={handleNotificationSettings}
+                          className={`w-full px-4 py-2 text-left text-sm flex items-center hover:bg-opacity-80 transition-colors duration-200 ${
+                            state.isDarkMode 
+                              ? 'text-gray-300 hover:bg-gray-700' 
+                              : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          <BellRing className="h-4 w-4 mr-2" />
+                          Notification Settings
+                        </button>
+
+                        <button
+                          onClick={handleReconnectGoogleCalendar}
+                          className={`w-full px-4 py-2 text-left text-sm flex items-center hover:bg-opacity-80 transition-colors duration-200 ${
+                            state.isDarkMode 
+                              ? 'text-yellow-400 hover:bg-gray-700' 
+                              : 'text-yellow-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Reconnect Calendar
+                        </button>
+
+                        <button
+                          onClick={resetOnboarding}
+                          className={`w-full px-4 py-2 text-left text-sm flex items-center hover:bg-opacity-80 transition-colors duration-200 ${
+                            state.isDarkMode 
+                              ? 'text-gray-300 hover:bg-gray-700' 
+                              : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          <RotateCcw className="h-4 w-4 mr-2" />
+                          Reset Preferences
+                        </button>
                       </div>
                     </div>
-
-                    {/* Notification Settings */}
-                    <button
-                      onClick={handleNotificationSettings}
-                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
-                        state.isDarkMode 
-                          ? 'text-green-400 hover:bg-gray-700' 
-                          : 'text-green-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <BellRing className="h-4 w-4" />
-                      <div>
-                        <div className="font-medium">Notifications</div>
-                        <div className={`text-xs ${
-                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
-                        }`}>
-                          Configure alerts and reminders
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* User Preferences Info */}
-                    <div className={`px-4 py-3 border-t ${
-                      state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-                    }`}>
-                      <div className={`text-xs ${
-                        state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                      }`}>
-                        <div className="mb-2">
-                          <span className="font-medium">Current Status:</span>
-                        </div>
-                        {state.user?.preferences && (
-                          <div className="space-y-1">
-                            <div>• Focus Areas: {state.user.preferences.focusAreas?.join(', ') || 'None set'}</div>
-                            <div>• Productive Hours: {state.user.preferences.productivityHours?.join(', ') || 'None set'}</div>
-                            <div>• AI Suggestions: {state.user.preferences.aiSuggestions ? 'Enabled' : 'Disabled'}</div>
-                            <div>• AI Events: {aiEventCount} created</div>
-                            <div>• Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Not connected'}</div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Profile */}
-              <div className="relative" ref={profileMenuRef}>
-                <button
-                  onClick={() => setShowProfileMenu(!showProfileMenu)}
-                  className="flex items-center space-x-2 p-1 rounded-lg hover:bg-opacity-80 transition-colors duration-200"
-                >
-                  <img
-                    src={state.user?.avatar}
-                    alt={state.user?.name}
-                    className="w-8 h-8 rounded-full object-cover"
-                  />
-                  <span className={`text-sm font-medium ${
-                    state.isDarkMode ? 'text-white' : 'text-gray-900'
-                  }`}>
-                    {state.user?.name}
-                  </span>
-                </button>
-
-                {showProfileMenu && (
-                  <div className={`absolute right-0 mt-2 w-48 rounded-lg shadow-lg py-1 z-50 ${
-                    state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'
-                  }`}>
-                    <a href="#" className={`block px-4 py-2 text-sm hover:bg-opacity-80 transition-colors duration-200 ${
-                      state.isDarkMode 
-                        ? 'text-gray-300 hover:bg-gray-700' 
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}>
-                      Profile Settings
-                    </a>
-                    <a href="#" className={`block px-4 py-2 text-sm hover:bg-opacity-80 transition-colors duration-200 ${
-                      state.isDarkMode 
-                        ? 'text-gray-300 hover:bg-gray-700' 
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}>
-                      Preferences
-                    </a>
-                    <hr className={`my-1 ${state.isDarkMode ? 'border-gray-700' : 'border-gray-200'}`} />
-                    <a href="#" className={`block px-4 py-2 text-sm hover:bg-opacity-80 transition-colors duration-200 ${
-                      state.isDarkMode 
-                        ? 'text-gray-300 hover:bg-gray-700' 
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}>
-                      Sign Out
-                    </a>
                   </div>
                 )}
               </div>
@@ -757,116 +461,89 @@ export default function Header() {
         </div>
       </header>
 
-      {/* Reset Preferences Dialog */}
+      {/* Reset Dialog */}
       {showResetDialog && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" />
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className={`rounded-lg max-w-md w-full mx-4 p-6 ${
+            state.isDarkMode ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            <div className="flex items-center mb-4">
+              <AlertTriangle className={`h-6 w-6 mr-3 ${
+                state.isDarkMode ? 'text-yellow-400' : 'text-yellow-600'
+              }`} />
+              <h3 className={`text-lg font-medium ${
+                state.isDarkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                Reset Preferences
+              </h3>
+            </div>
             
-            <div className={`relative w-full max-w-md rounded-xl shadow-2xl transition-all ${
-              state.isDarkMode ? 'bg-gray-800' : 'bg-white'
+            <p className={`text-sm mb-6 ${
+              state.isDarkMode ? 'text-gray-300' : 'text-gray-600'
             }`}>
-              <div className="p-6">
-                <div className="flex items-center space-x-3 mb-4">
-                  <div className="p-2 bg-yellow-500 rounded-lg">
-                    <RotateCcw className="h-5 w-5 text-white" />
-                  </div>
-                  <h3 className={`text-lg font-semibold ${
-                    state.isDarkMode ? 'text-white' : 'text-gray-900'
-                  }`}>
-                    Reset Preferences
-                  </h3>
-                </div>
-                
-                <p className={`text-sm mb-4 ${
-                  state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+              This will reset your preferences and restart onboarding. Your Google Calendar connection will be preserved.
+            </p>
+
+            {aiEventCount > 0 && (
+              <div className={`mb-6 p-3 rounded-lg ${
+                state.isDarkMode ? 'bg-blue-900 bg-opacity-30' : 'bg-blue-50'
+              }`}>
+                <p className={`text-sm mb-3 ${
+                  state.isDarkMode ? 'text-blue-200' : 'text-blue-800'
                 }`}>
-                  You're about to reset all your preferences and restart onboarding. 
-                  {aiEventCount > 0 && ` You have ${aiEventCount} AI-suggested events in your calendar.`}
+                  You have {aiEventCount} AI-suggested events. What would you like to do with them?
                 </p>
-
-                {aiEventCount > 0 && (
-                  <div className={`p-3 rounded-lg mb-4 ${
-                    state.isDarkMode ? 'bg-blue-900 bg-opacity-20 text-blue-400' : 'bg-blue-50 text-blue-600'
-                  }`}>
-                    <div className="flex items-center space-x-2 mb-2">
-                      <Sparkles className="h-4 w-4" />
-                      <span className="font-medium">AI Events Found</span>
-                    </div>
-                    <p className="text-xs">
-                      What would you like to do with your {aiEventCount} AI-suggested calendar events?
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-3">
-                  {aiEventCount > 0 && (
-                    <button
-                      onClick={() => handleResetWithEventChoice(true)}
-                      className={`w-full p-4 text-left border-2 rounded-lg transition-colors ${
-                        state.isDarkMode
-                          ? 'border-green-600 hover:border-green-500 hover:bg-green-900 hover:bg-opacity-20'
-                          : 'border-green-200 hover:border-green-500 hover:bg-green-50'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <Save className="h-5 w-5 text-green-500" />
-                        <div>
-                          <div className={`font-medium ${
-                            state.isDarkMode ? 'text-white' : 'text-gray-900'
-                          }`}>
-                            Keep AI Events & Reset Preferences
-                          </div>
-                          <div className={`text-sm ${
-                            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                          }`}>
-                            Preserve your {aiEventCount} AI-suggested events and adapt suggestions to new preferences
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  )}
-
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleResetWithEventChoice(true)}
+                    className={`w-full px-4 py-2 text-sm rounded-md transition-colors duration-200 ${
+                      state.isDarkMode 
+                        ? 'bg-green-600 hover:bg-green-700 text-white' 
+                        : 'bg-green-600 hover:bg-green-700 text-white'
+                    }`}
+                  >
+                    <Save className="h-4 w-4 inline mr-2" />
+                    Keep AI Events & Reset Preferences
+                  </button>
                   <button
                     onClick={() => handleResetWithEventChoice(false)}
-                    className={`w-full p-4 text-left border-2 rounded-lg transition-colors ${
-                      state.isDarkMode
-                        ? 'border-red-600 hover:border-red-500 hover:bg-red-900 hover:bg-opacity-20'
-                        : 'border-red-200 hover:border-red-500 hover:bg-red-50'
+                    className={`w-full px-4 py-2 text-sm rounded-md transition-colors duration-200 ${
+                      state.isDarkMode 
+                        ? 'bg-red-600 hover:bg-red-700 text-white' 
+                        : 'bg-red-600 hover:bg-red-700 text-white'
                     }`}
                   >
-                    <div className="flex items-center space-x-3">
-                      <Trash2 className="h-5 w-5 text-red-500" />
-                      <div>
-                        <div className={`font-medium ${
-                          state.isDarkMode ? 'text-white' : 'text-gray-900'
-                        }`}>
-                          Complete Reset
-                        </div>
-                        <div className={`text-sm ${
-                          state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                        }`}>
-                          Clear all data including AI events and start completely fresh
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-
-                <div className="flex justify-end mt-6">
-                  <button
-                    onClick={() => setShowResetDialog(false)}
-                    className={`px-4 py-2 text-sm border rounded-lg ${
-                      state.isDarkMode
-                        ? 'border-gray-600 text-gray-300 hover:bg-gray-700'
-                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    Cancel
+                    <Trash2 className="h-4 w-4 inline mr-2" />
+                    Delete Everything & Reset
                   </button>
                 </div>
               </div>
-            </div>
+            )}
+
+            {aiEventCount === 0 && (
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => handleResetWithEventChoice(false)}
+                  className={`flex-1 px-4 py-2 text-sm rounded-md transition-colors duration-200 ${
+                    state.isDarkMode 
+                      ? 'bg-red-600 hover:bg-red-700 text-white' 
+                      : 'bg-red-600 hover:bg-red-700 text-white'
+                  }`}
+                >
+                  Yes, Reset
+                </button>
+                <button
+                  onClick={() => setShowResetDialog(false)}
+                  className={`flex-1 px-4 py-2 text-sm rounded-md border transition-colors duration-200 ${
+                    state.isDarkMode 
+                      ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

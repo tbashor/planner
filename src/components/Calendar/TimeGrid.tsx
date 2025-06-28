@@ -2,7 +2,7 @@ import React from 'react';
 import { format } from 'date-fns';
 import { useApp } from '../../contexts/AppContext';
 import EventBlock from './EventBlock';
-import { mockEvents } from '../../data/mockData';
+import { useCalendarData } from '../../hooks/useCalendarData';
 
 interface TimeGridProps {
   weekDays: Date[];
@@ -10,6 +10,7 @@ interface TimeGridProps {
 
 export default function TimeGrid({ weekDays }: TimeGridProps) {
   const { state } = useApp();
+  const { events, isLoading, error, isAuthenticated, userEmail } = useCalendarData();
   
   // Generate time slots from 6 AM to 11 PM
   const timeSlots = Array.from({ length: 17 }, (_, i) => {
@@ -23,7 +24,7 @@ export default function TimeGrid({ weekDays }: TimeGridProps) {
 
   const getEventsForDayAndHour = (day: Date, hour: number) => {
     const dayString = format(day, 'yyyy-MM-dd');
-    return mockEvents.filter(event => {
+    return events.filter(event => {
       if (event.date !== dayString) return false;
       const eventStartHour = parseInt(event.startTime.split(':')[0]);
       return eventStartHour === hour;
@@ -42,12 +43,37 @@ export default function TimeGrid({ weekDays }: TimeGridProps) {
     return (durationInMinutes / 60) * 60;
   };
 
+  // Show loading indicator
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex items-center space-x-2">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+          <span className={`text-sm ${state.isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            {isAuthenticated ? `Loading calendar for ${userEmail}...` : 'Loading calendar...'}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-8 min-h-full">
-      {/* Time column */}
-      <div className={`border-r ${
-        state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
-      }`}>
+    <div className="space-y-2">
+      {/* Calendar Status */}
+      {error && (
+        <div className={`p-2 rounded-lg text-sm ${
+          state.isDarkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-800'
+        }`}>
+          {error}
+        </div>
+      )}
+      
+      {/* Calendar Grid */}
+      <div className="grid grid-cols-8 min-h-full">
+        {/* Time column */}
+        <div className={`border-r ${
+          state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
+        }`}>
         {timeSlots.map((slot, index) => (
           <div
             key={index}
@@ -101,6 +127,7 @@ export default function TimeGrid({ weekDays }: TimeGridProps) {
           })}
         </div>
       ))}
+      </div>
     </div>
   );
 }

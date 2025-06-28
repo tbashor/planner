@@ -3,6 +3,7 @@ import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface CallbackState {
   status: 'processing' | 'success' | 'error';
@@ -12,6 +13,7 @@ interface CallbackState {
 
 export default function OAuthCallback() {
   const { state, dispatch } = useApp();
+  const { authDispatch, checkConnectionStatus } = useAuth();
   const [callbackState, setCallbackState] = useState<CallbackState>({
     status: 'processing',
     message: 'Processing authentication...',
@@ -47,22 +49,49 @@ export default function OAuthCallback() {
       });
 
       // Exchange code for tokens
-      const tokens = await oauthService.exchangeCodeForTokens(code, stateParam);
+      await oauthService.exchangeCodeForTokens(code, stateParam);
+
+      setCallbackState({
+        status: 'processing',
+        message: 'Retrieving user information...',
+      });
+
+      // Get authenticated user email
+      const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+      
+      if (!userEmail || userEmail === 'authenticated.user@gmail.com') {
+        throw new Error('Could not retrieve valid user email from Google');
+      }
+
+      console.log('✅ Retrieved authenticated user email:', userEmail);
 
       setCallbackState({
         status: 'processing',
         message: 'Setting up AI integration...',
       });
 
-      // Connect to server integration if user email is available
-      if (state.user?.email) {
-        try {
-          await googleCalendarService.connectToServerIntegration(state.user.email);
-          console.log('✅ Connected to server integration');
-        } catch (error) {
-          console.warn('⚠️ Failed to connect to server integration:', error);
-          // Don't fail the entire flow if server integration fails
-        }
+      // Update AuthContext with successful authentication
+      authDispatch({ 
+        type: 'SET_AUTHENTICATED', 
+        payload: { userEmail } 
+      });
+
+      // Check Composio connection status
+      try {
+        await checkConnectionStatus(userEmail);
+        console.log('✅ Composio connection status checked');
+      } catch (error) {
+        console.warn('⚠️ Failed to check Composio connection:', error);
+        // Don't fail the entire flow if Composio check fails
+      }
+
+      // Connect to server integration if available
+      try {
+        await googleCalendarService.connectToServerIntegration(userEmail);
+        console.log('✅ Connected to server integration');
+      } catch (error) {
+        console.warn('⚠️ Failed to connect to server integration:', error);
+        // Don't fail the entire flow if server integration fails
       }
 
       setCallbackState({
@@ -77,7 +106,7 @@ export default function OAuthCallback() {
         payload: {
           id: Date.now().toString(),
           type: 'ai',
-          content: '🎉 Perfect! Google Calendar is now connected with full editing permissions and AI integration. Your calendar events will sync automatically and I can now directly create, update, and manage events in your Google Calendar using natural language commands!',
+          content: `🎉 Perfect! Google Calendar is now connected with full editing permissions and AI integration for ${userEmail}. Your calendar events will sync automatically and I can now directly create, update, and manage events in your Google Calendar using natural language commands!`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -89,6 +118,14 @@ export default function OAuthCallback() {
 
     } catch (error) {
       console.error('❌ OAuth callback error:', error);
+      
+      // Clear any partial authentication state
+      oauthService.clearTokens();
+      googleCalendarService.clearExternalTokens();
+      authDispatch({ 
+        type: 'SET_DISCONNECTED', 
+        payload: error instanceof Error ? error.message : 'Unknown error occurred' 
+      });
       
       setCallbackState({
         status: 'error',

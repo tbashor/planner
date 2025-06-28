@@ -440,7 +440,7 @@ async function getUserTools(userEmail) {
       throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the authentication process.`);
     }
     
-    // Check if we have an active Google Calendar connection - be more strict
+    // Check if we have a Google Calendar connection - be more permissive
     let googleConnection = connections.find(conn => {
       const appName = (conn.appName || conn.app || '').toLowerCase();
       const isGoogleCalendar = appName === 'googlecalendar' || 
@@ -450,22 +450,22 @@ async function getUserTools(userEmail) {
       
       if (!isGoogleCalendar) return false;
       
-      // Be strict about what constitutes "active" - only these statuses are truly ready
-      const activeStates = ['active', 'connected', 'ready', 'authenticated'];
-      const isActive = conn.status && 
-                      activeStates.some(state => 
-                        conn.status.toLowerCase() === state.toLowerCase()
-                      );
+      // Be more permissive - try to use any Google Calendar connection that's not explicitly failed
+      const failedStates = ['failed', 'error', 'cancelled', 'invalid', 'deleted'];
+      const hasFailed = conn.status && 
+                       failedStates.some(state => 
+                         conn.status.toLowerCase().includes(state.toLowerCase())
+                       );
       
-      return isActive;
+      return !hasFailed; // Use any connection that hasn't explicitly failed
     });
     
-    // If no "active" connection found, try to find any Google Calendar connection
+    // If no usable connection found, provide detailed error information
     if (!googleConnection) {
-      console.warn(`⚠️ No active Google Calendar connection found for entity ${entityId}`);
+      console.warn(`⚠️ No usable Google Calendar connection found for entity ${entityId}`);
       
       // Check if there are any Google Calendar connections at all
-      const anyGoogleConnection = connections.find(conn => {
+      const allGoogleConnections = connections.filter(conn => {
         const appName = (conn.appName || conn.app || '').toLowerCase();
         return appName === 'googlecalendar' || 
                appName === 'google_calendar' ||
@@ -473,24 +473,16 @@ async function getUserTools(userEmail) {
                appName === 'calendar';
       });
       
-      if (anyGoogleConnection) {
-        console.log(`🔍 Found Google Calendar connection with status: ${anyGoogleConnection.status}`);
+      if (allGoogleConnections.length > 0) {
+        console.log(`🔍 Found ${allGoogleConnections.length} Google Calendar connection(s):`);
+        allGoogleConnections.forEach((conn, index) => {
+          console.log(`  ${index + 1}. ID: ${conn.id}, Status: ${conn.status}, App: ${conn.appName}`);
+        });
         
-        // If connection is initializing, initiated, or pending, it's not ready yet
-        if (anyGoogleConnection.status && 
-            (anyGoogleConnection.status.toLowerCase().includes('initializing') ||
-             anyGoogleConnection.status.toLowerCase().includes('initiated') ||
-             anyGoogleConnection.status.toLowerCase().includes('pending'))) {
-          console.log(`⏳ Connection is ${anyGoogleConnection.status}, not ready for tools yet`);
-          
-          throw new Error(`Google Calendar connection is still initializing (${anyGoogleConnection.status}). Please wait for the connection to become active before using AI features.`);
-        } else {
-          // Connection has unknown status - try to use it but warn
-          console.log(`🤔 Using Google Calendar connection with unclear status: ${anyGoogleConnection.status}`);
-          googleConnection = anyGoogleConnection;
-        }
+        const statuses = allGoogleConnections.map(c => c.status).join(', ');
+        throw new Error(`Google Calendar connection(s) found but not ready for tools. Statuses: [${statuses}]. Please complete or reauthorize the Google Calendar connection.`);
       } else {
-        throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the Google Calendar authentication.`);
+        throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the Google Calendar authentication through the AI assistant.`);
       }
     }
     
@@ -500,19 +492,12 @@ async function getUserTools(userEmail) {
       appName: googleConnection.appName
     });
     
-    // Get tools with more specific action list
+    // Log what we're about to try
+    console.log(`🔧 Attempting to get tools for entity ${entityId} with connection ${googleConnection.id}`);
+    
+    // Get only Google Calendar tools to avoid the massive 9639 tools
     const tools = await toolset.getTools({
-      actions: [
-        'GOOGLECALENDAR_LIST_EVENTS',
-        'GOOGLECALENDAR_CREATE_EVENT',
-        'GOOGLECALENDAR_UPDATE_EVENT',
-        'GOOGLECALENDAR_DELETE_EVENT',
-        'GOOGLECALENDAR_QUICK_ADD',
-        'GOOGLECALENDAR_FIND_FREE_TIME',
-        'GOOGLECALENDAR_GET_EVENT',
-        'GOOGLECALENDAR_MOVE_EVENT',
-        'GOOGLECALENDAR_LIST_CALENDARS'
-      ]
+      apps: ['googlecalendar']
     }, entityId);
     
     console.log(`✅ Retrieved ${tools ? Object.keys(tools).length : 0} tools for ${userEmail}`);
@@ -1411,7 +1396,10 @@ PERSONALITY:
 - Considerate of user's time and preferences
 - Clear in communication about what actions you're taking
 
-Remember: You have direct access to ${userEmail}'s Google Calendar through these tools. Use them intelligently to provide the best possible assistance.`;
+IMPORTANT: You have access to these Google Calendar tools: ${Object.keys(tools).join(', ')}
+If the user asks about viewing their calendar events or current schedule, you should explain that you can help create, update, and delete events, but reading existing events may require additional setup.
+
+Remember: Use the available tools intelligently to provide the best possible assistance within the current capabilities.`;
 
     console.log(`🤖 Sending request to OpenAI agent for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
     
@@ -1593,6 +1581,440 @@ app.get('/api/stats', async (req, res) => {
     });
   }
 });
+
+// Fetch Google Calendar events for a user
+app.post('/api/composio/calendar/events', async (req, res) => {
+  try {
+    const { userEmail, startDate, endDate, calendarId = 'primary' } = req.body;
+    
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail is required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'startDate and endDate are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`📅 Fetching calendar events for ${userEmail} from ${startDate} to ${endDate}`);
+    
+    // Check connection status
+    const connectionStatus = await checkConnectionStatus(userEmail);
+    if (connectionStatus.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: `Cannot fetch events: ${connectionStatus.message}`,
+        needsSetup: connectionStatus.needsSetup,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get user tools with detailed error reporting
+    let tools;
+    try {
+      tools = await getUserTools(userEmail);
+      console.log(`🔧 Available tools for ${userEmail}:`, Object.keys(tools || {}));
+    } catch (toolsError) {
+      console.error(`❌ Error getting tools for ${userEmail}:`, toolsError);
+      return res.status(503).json({
+        success: false,
+        error: `Failed to get Google Calendar tools: ${toolsError.message}`,
+        details: 'This usually means the Google Calendar connection needs to be completed or reauthorized',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!tools) {
+      return res.status(503).json({
+        success: false,
+        error: 'No Google Calendar tools available',
+        details: 'The Google Calendar connection may need to be reauthorized. Please complete the authentication process in the AI assistant.',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const availableTools = Object.keys(tools);
+    console.log(`🔧 Available tools for events fetch:`, availableTools);
+    
+    // Try different possible action names for listing events
+    const possibleListEventActions = [
+      'GOOGLECALENDAR_LIST_EVENTS',
+      'GOOGLECALENDAR_GET_EVENTS', 
+      'GOOGLECALENDAR_EVENTS_LIST',
+      'GOOGLECALENDAR_FIND_EVENTS',
+      'GOOGLECALENDAR_SEARCH_EVENTS'
+    ];
+    
+    let listEventsTool = null;
+    let actionName = null;
+    
+    for (const action of possibleListEventActions) {
+      if (tools[action]) {
+        listEventsTool = tools[action];
+        actionName = action;
+        console.log(`✅ Found events tool: ${action}`);
+        break;
+      }
+    }
+    
+    if (!listEventsTool) {
+      console.warn(`⚠️ No events listing tool found. Available tools:`, availableTools);
+      
+      // For now, return empty events array instead of failing
+      // This allows the app to work with local/mock events
+      return res.json({
+        success: true,
+        events: [],
+        userEmail,
+        calendarId,
+        dateRange: { startDate, endDate },
+        message: 'Google Calendar events tool not available. Using local events only.',
+        availableTools,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Execute the found list events tool
+    console.log(`🔧 Executing ${actionName} with params:`, {
+      calendarId,
+      timeMin: startDate,
+      timeMax: endDate
+    });
+    
+    const resultText = await listEventsTool.execute({
+      calendarId: calendarId,
+      timeMin: startDate,
+      timeMax: endDate,
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+    const result = JSON.parse(resultText)
+    console.log(`✅ Retrieved ${result.data?.items?.length || 0} events for ${userEmail}`);
+
+    // Transform events to match app format
+    const transformedEvents = (result.data?.items || []).map(event => {
+      const startDateTime = event.start?.dateTime || event.start?.date;
+      const endDateTime = event.end?.dateTime || event.end?.date;
+      const isAllDay = !event.start?.dateTime;
+      
+      // Extract time portion from ISO datetime for the frontend
+      let startTime = '09:00';
+      let endTime = '10:00';
+      let date = new Date().toISOString().split('T')[0];
+      
+      if (startDateTime) {
+        const startDate = new Date(startDateTime);
+        if (!isNaN(startDate.getTime())) {
+          startTime = startDate.toLocaleTimeString('en-US', { 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+          date = startDate.toISOString().split('T')[0];
+        }
+      }
+      
+      if (endDateTime) {
+        const endDate = new Date(endDateTime);
+        if (!isNaN(endDate.getTime())) {
+          endTime = endDate.toLocaleTimeString('en-US', { 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+        }
+      }
+      
+      return {
+        id: event.id,
+        title: event.summary || 'Untitled Event',
+        description: event.description || '',
+        startTime,
+        endTime,
+        date,
+        isAllDay,
+        location: event.location,
+        attendees: event.attendees?.map(a => a.email) || [],
+        source: 'google_calendar',
+        calendarId: event.organizer?.email || calendarId
+      };
+    });
+    
+    res.json({
+      success: true,
+      events: transformedEvents,
+      userEmail,
+      calendarId,
+      dateRange: { startDate, endDate },
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching calendar events:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Create a calendar event for a user
+app.post('/api/composio/calendar/create-event', async (req, res) => {
+  try {
+    const { userEmail, title, description, startTime, endTime, calendarId = 'primary', attendees } = req.body;
+    
+    if (!userEmail || !title || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail, title, startTime, and endTime are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`📝 Creating calendar event for ${userEmail}: ${title}`);
+    
+    // Check connection status
+    const connectionStatus = await checkConnectionStatus(userEmail);
+    if (connectionStatus.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: `Cannot create event: ${connectionStatus.message}`,
+        needsSetup: connectionStatus.needsSetup,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get user tools
+    const tools = await getUserTools(userEmail);
+    if (!tools.GOOGLECALENDAR_CREATE_EVENT) {
+      return res.status(503).json({
+        success: false,
+        error: 'Google Calendar create event tool not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Execute the create event tool
+    const eventData = {
+      calendarId: calendarId,
+      summary: title,
+      description: description || '',
+      start: {
+        dateTime: startTime,
+        timeZone: 'UTC'
+      },
+      end: {
+        dateTime: endTime,
+        timeZone: 'UTC'
+      }
+    };
+    
+    if (attendees && attendees.length > 0) {
+      eventData.attendees = attendees.map(email => ({ email }));
+    }
+    
+    const result = await tools.GOOGLECALENDAR_CREATE_EVENT.execute(eventData);
+    
+    console.log(`✅ Created event for ${userEmail}: ${result.id}`);
+    
+    // Transform created event to match app format
+    const transformedEvent = {
+      id: result.id,
+      title: result.summary,
+      description: result.description || '',
+      startTime: result.start?.dateTime || result.start?.date,
+      endTime: result.end?.dateTime || result.end?.date,
+      date: (result.start?.dateTime || result.start?.date)?.split('T')[0],
+      isAllDay: !result.start?.dateTime,
+      location: result.location,
+      attendees: result.attendees?.map(a => a.email) || [],
+      source: 'google_calendar',
+      calendarId: result.organizer?.email || calendarId
+    };
+    
+    res.json({
+      success: true,
+      event: transformedEvent,
+      userEmail,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating calendar event:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Update a calendar event for a user
+app.post('/api/composio/calendar/update-event', async (req, res) => {
+  try {
+    const { userEmail, eventId, title, description, startTime, endTime, calendarId = 'primary' } = req.body;
+    
+    if (!userEmail || !eventId) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail and eventId are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`✏️ Updating calendar event for ${userEmail}: ${eventId}`);
+    
+    // Check connection status
+    const connectionStatus = await checkConnectionStatus(userEmail);
+    if (connectionStatus.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: `Cannot update event: ${connectionStatus.message}`,
+        needsSetup: connectionStatus.needsSetup,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get user tools
+    const tools = await getUserTools(userEmail);
+    if (!tools.GOOGLECALENDAR_UPDATE_EVENT) {
+      return res.status(503).json({
+        success: false,
+        error: 'Google Calendar update event tool not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Build update data
+    const updateData = {
+      calendarId: calendarId,
+      eventId: eventId
+    };
+    
+    if (title) updateData.summary = title;
+    if (description !== undefined) updateData.description = description;
+    if (startTime) {
+      updateData.start = {
+        dateTime: startTime,
+        timeZone: 'UTC'
+      };
+    }
+    if (endTime) {
+      updateData.end = {
+        dateTime: endTime,
+        timeZone: 'UTC'
+      };
+    }
+    
+    // Execute the update event tool
+    const result = await tools.GOOGLECALENDAR_UPDATE_EVENT.execute(updateData);
+    
+    console.log(`✅ Updated event for ${userEmail}: ${eventId}`);
+    
+    // Transform updated event to match app format
+    const transformedEvent = {
+      id: result.id,
+      title: result.summary,
+      description: result.description || '',
+      startTime: result.start?.dateTime || result.start?.date,
+      endTime: result.end?.dateTime || result.end?.date,
+      date: (result.start?.dateTime || result.start?.date)?.split('T')[0],
+      isAllDay: !result.start?.dateTime,
+      location: result.location,
+      attendees: result.attendees?.map(a => a.email) || [],
+      source: 'google_calendar',
+      calendarId: result.organizer?.email || calendarId
+    };
+    
+    res.json({
+      success: true,
+      event: transformedEvent,
+      userEmail,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating calendar event:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Delete a calendar event for a user
+app.post('/api/composio/calendar/delete-event', async (req, res) => {
+  try {
+    const { userEmail, eventId, calendarId = 'primary' } = req.body;
+    
+    if (!userEmail || !eventId) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail and eventId are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`🗑️ Deleting calendar event for ${userEmail}: ${eventId}`);
+    
+    // Check connection status
+    const connectionStatus = await checkConnectionStatus(userEmail);
+    if (connectionStatus.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: `Cannot delete event: ${connectionStatus.message}`,
+        needsSetup: connectionStatus.needsSetup,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get user tools
+    const tools = await getUserTools(userEmail);
+    if (!tools.GOOGLECALENDAR_DELETE_EVENT) {
+      return res.status(503).json({
+        success: false,
+        error: 'Google Calendar delete event tool not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Execute the delete event tool
+    await tools.GOOGLECALENDAR_DELETE_EVENT.execute({
+      calendarId: calendarId,
+      eventId: eventId
+    });
+    
+    console.log(`✅ Deleted event for ${userEmail}: ${eventId}`);
+    
+    res.json({
+      success: true,
+      userEmail,
+      eventId,
+      message: 'Event deleted successfully',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting calendar event:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Note: The google-tokens endpoint has been removed as we now use Composio tools directly
+// instead of extracting raw OAuth tokens
 
 // Error handling middleware
 app.use((error, req, res, next) => {

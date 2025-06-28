@@ -2,14 +2,16 @@ import React, { useRef, useEffect, useState } from 'react';
 import Calendar from '@toast-ui/react-calendar';
 import '@toast-ui/calendar/dist/toastui-calendar.min.css';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { useHybridCalendarData } from '../../hooks/useHybridCalendarData';
 import { Event } from '../../types';
-import { format, parseISO, addDays, startOfWeek, endOfWeek } from 'date-fns';
-import { googleCalendarService } from '../../services/googleCalendarService';
+import { format } from 'date-fns';
 import EventDialog from '../EventManagement/EventDialog';
 import QuickEventCreator from '../EventManagement/QuickEventCreator';
 import EventContextMenu from '../EventManagement/EventContextMenu';
 import { Plus, Zap, Undo, Redo } from 'lucide-react';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
+import { mockEvents } from '../../data/mockData';
 
 interface ToastCalendarEvent {
   id: string;
@@ -30,12 +32,27 @@ interface ToastCalendarEvent {
 
 export default function ToastCalendar() {
   const { state, dispatch } = useApp();
+  const { authState } = useAuth();
+  
+  // Use the hybrid calendar data hook
+  const { 
+    events: calendarEvents, 
+    isLoading: isLoadingCalendarData, 
+    error: calendarError,
+    isAuthenticated,
+    userEmail,
+    authenticationMethod,
+    fetchCurrentWeek,
+    createEvent: createCalendarEvent,
+    updateEvent: updateCalendarEvent,
+    deleteEvent: deleteCalendarEvent
+  } = useHybridCalendarData();
+  
   const calendarRef = useRef<any>(null);
   const [view, setView] = useState<'month' | 'week' | 'day'>('week');
-  const [isLoadingGoogleEvents, setIsLoadingGoogleEvents] = useState(false);
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [calendarInstance, setCalendarInstance] = useState<any>(null);
-  
+
   // Event management states
   const [eventDialog, setEventDialog] = useState<{
     isOpen: boolean;
@@ -83,6 +100,23 @@ export default function ToastCalendar() {
     }
   }, [eventsHistory, dispatch]);
 
+  // Combine app events with calendar events from hybrid hook
+  const getAllEvents = (): Event[] => {
+    if (!isAuthenticated) {
+      // If not authenticated and no local events, show mock events
+      return state.events.length > 0 ? state.events : mockEvents;
+    }
+    
+    // Merge state events with calendar events, avoiding duplicates
+    const existingEventIds = new Set(state.events.map(e => e.id));
+    const uniqueCalendarEvents = calendarEvents.filter(e => !existingEventIds.has(e.id));
+    
+    const allEvents = [...state.events, ...uniqueCalendarEvents];
+    
+    // If authenticated but no events found, show mock events
+    return allEvents.length > 0 ? allEvents : mockEvents;
+  };
+
   // Convert app events to Toast UI Calendar format
   const convertToToastEvents = (events: Event[]): ToastCalendarEvent[] => {
     return events.map(event => {
@@ -111,6 +145,7 @@ export default function ToastCalendar() {
   const convertFromToastEvent = (toastEvent: any): Event => {
     const startDate = new Date(toastEvent.start);
     const endDate = new Date(toastEvent.end);
+    const allEvents = getAllEvents();
 
     return {
       id: toastEvent.id,
@@ -118,90 +153,18 @@ export default function ToastCalendar() {
       startTime: format(startDate, 'HH:mm'),
       endTime: format(endDate, 'HH:mm'),
       date: format(startDate, 'yyyy-MM-dd'),
-      category: state.events.find(e => e.id === toastEvent.id)?.category || {
+      category: allEvents.find(e => e.id === toastEvent.id)?.category || {
         id: 'general',
         name: 'General',
         color: toastEvent.backgroundColor || '#3B82F6',
         icon: 'Calendar',
       },
-      priority: state.events.find(e => e.id === toastEvent.id)?.priority || 'medium',
+      priority: allEvents.find(e => e.id === toastEvent.id)?.priority || 'medium',
       description: toastEvent.location || '',
-      isCompleted: state.events.find(e => e.id === toastEvent.id)?.isCompleted || false,
+      isCompleted: allEvents.find(e => e.id === toastEvent.id)?.isCompleted || false,
       isStatic: false,
       color: toastEvent.backgroundColor || '#3B82F6',
     };
-  };
-
-  // Load Google Calendar events for the current view
-  const loadGoogleCalendarEvents = async (viewDate: Date) => {
-    if (!googleCalendarService.isAuthenticated()) {
-      return;
-    }
-
-    setIsLoadingGoogleEvents(true);
-    
-    try {
-      let startDate: Date;
-      let endDate: Date;
-
-      switch (view) {
-        case 'month':
-          startDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-          endDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0);
-          break;
-        case 'week':
-          startDate = startOfWeek(viewDate, { weekStartsOn: 0 });
-          endDate = endOfWeek(viewDate, { weekStartsOn: 0 });
-          break;
-        case 'day':
-          startDate = new Date(viewDate);
-          startDate.setHours(0, 0, 0, 0);
-          endDate = new Date(viewDate);
-          endDate.setHours(23, 59, 59, 999);
-          break;
-        default:
-          startDate = startOfWeek(viewDate, { weekStartsOn: 0 });
-          endDate = endOfWeek(viewDate, { weekStartsOn: 0 });
-      }
-
-      const googleEvents = await googleCalendarService.getEvents('primary', startDate, endDate);
-      
-      const existingGoogleEventIds = new Set(
-        state.events
-          .filter(e => e.id.startsWith('google_'))
-          .map(e => e.id)
-      );
-      
-      const newGoogleEvents = googleEvents.filter(e => !existingGoogleEventIds.has(e.id));
-      
-      if (newGoogleEvents.length > 0) {
-        const updatedEvents = [...state.events, ...newGoogleEvents];
-        setEventsHistory(updatedEvents);
-        
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `📅 I've synced ${newGoogleEvents.length} events from your Google Calendar for this ${view}. You can now drag and edit these events directly!`,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      }
-    } catch (error) {
-      console.error('Error loading Google Calendar events:', error);
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: '⚠️ I had trouble syncing your Google Calendar events. Please check your connection and try again.',
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } finally {
-      setIsLoadingGoogleEvents(false);
-    }
   };
 
   // Basic calendar options without theme conflicts
@@ -294,52 +257,40 @@ export default function ToastCalendar() {
     const { event, changes } = updateData;
     const updatedEvent = convertFromToastEvent({ ...event, ...changes });
     
-    const updatedEvents = state.events.map(e => 
-      e.id === updatedEvent.id ? updatedEvent : e
-    );
-    setEventsHistory(updatedEvents);
-
     if (event.id.startsWith('google_')) {
+      // Use hybrid hook for Google Calendar events
       try {
-        const success = await googleCalendarService.updateEvent(updatedEvent);
-        
-        if (success) {
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: Date.now().toString(),
-              type: 'ai',
-              content: `✅ Perfect! I've updated "${updatedEvent.title}" both locally and in your Google Calendar. The changes are synced across all your devices.`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        } else {
-          undo();
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: Date.now().toString(),
-              type: 'ai',
-              content: `⚠️ I updated "${updatedEvent.title}" locally, but couldn't sync the changes to Google Calendar. The changes have been reverted. Please check your connection and try again.`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        }
-      } catch (error) {
-        console.error('Error updating Google Calendar event:', error);
-        undo();
+        await updateCalendarEvent(updatedEvent);
         
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: Date.now().toString(),
             type: 'ai',
-            content: `❌ I couldn't update "${updatedEvent.title}" in Google Calendar. The changes have been reverted. Please try again.`,
+            content: `✅ Perfect! I've updated "${updatedEvent.title}" both locally and in your Google Calendar. The changes are synced across all your devices.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch (error) {
+        console.error('Error updating Google Calendar event:', error);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `❌ I couldn't update "${updatedEvent.title}" in Google Calendar. Please try again.`,
             timestamp: new Date().toISOString(),
           },
         });
       }
     } else {
+      // Handle local events
+      const updatedEvents = state.events.map(e => 
+        e.id === updatedEvent.id ? updatedEvent : e
+      );
+      setEventsHistory(updatedEvents);
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
@@ -353,50 +304,38 @@ export default function ToastCalendar() {
   };
 
   const onBeforeDeleteEvent = async (eventData: any) => {
-    const updatedEvents = state.events.filter(e => e.id !== eventData.id);
-    setEventsHistory(updatedEvents);
-
     if (eventData.id.startsWith('google_')) {
+      // Use hybrid hook for Google Calendar events
       try {
-        const success = await googleCalendarService.deleteEvent(eventData.id);
-        
-        if (success) {
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: Date.now().toString(),
-              type: 'ai',
-              content: `🗑️ I've successfully deleted "${eventData.title}" from both your local schedule and Google Calendar.`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        } else {
-          undo();
-          dispatch({
-            type: 'ADD_CHAT_MESSAGE',
-            payload: {
-              id: Date.now().toString(),
-              type: 'ai',
-              content: `⚠️ I removed "${eventData.title}" locally, but couldn't delete it from Google Calendar. The event has been restored. Please try again.`,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        }
-      } catch (error) {
-        console.error('Error deleting Google Calendar event:', error);
-        undo();
+        await deleteCalendarEvent(eventData.id);
         
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: Date.now().toString(),
             type: 'ai',
-            content: `❌ I couldn't delete "${eventData.title}" from Google Calendar. The event has been restored. Please try again.`,
+            content: `🗑️ I've successfully deleted "${eventData.title}" from both your local schedule and Google Calendar.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch (error) {
+        console.error('Error deleting Google Calendar event:', error);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `❌ I couldn't delete "${eventData.title}" from Google Calendar. Please try again.`,
             timestamp: new Date().toISOString(),
           },
         });
       }
     } else {
+      // Handle local events
+      const updatedEvents = state.events.filter(e => e.id !== eventData.id);
+      setEventsHistory(updatedEvents);
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
@@ -436,7 +375,7 @@ export default function ToastCalendar() {
     setView(newView);
     if (calendarInstance) {
       calendarInstance.changeView(newView);
-      loadGoogleCalendarEvents(currentCalendarDate);
+      // Calendar events are automatically loaded via the hybrid hook
     }
   };
 
@@ -458,12 +397,15 @@ export default function ToastCalendar() {
       setCurrentCalendarDate(newDate);
       dispatch({ type: 'SET_CURRENT_WEEK', payload: newDate });
       
-      loadGoogleCalendarEvents(newDate);
+      // Fetch events for the new date range
+      if (isAuthenticated) {
+        fetchCurrentWeek();
+      }
     }
   };
 
   const handleManualSync = async () => {
-    if (!googleCalendarService.isAuthenticated()) {
+    if (!isAuthenticated) {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
@@ -476,7 +418,7 @@ export default function ToastCalendar() {
       return;
     }
 
-    await loadGoogleCalendarEvents(currentCalendarDate);
+    await fetchCurrentWeek();
   };
 
   // Keyboard shortcuts
@@ -512,21 +454,15 @@ export default function ToastCalendar() {
   useEffect(() => {
     if (calendarInstance) {
       try {
-        const toastEvents = convertToToastEvents(state.events);
+        const allEvents = getAllEvents();
+        const toastEvents = convertToToastEvents(allEvents);
         calendarInstance.clear();
         calendarInstance.createEvents(toastEvents);
       } catch (error) {
         console.error('Error updating calendar events:', error);
       }
     }
-  }, [state.events, calendarInstance]);
-
-  // Load initial Google Calendar events
-  useEffect(() => {
-    if (googleCalendarService.isAuthenticated()) {
-      loadGoogleCalendarEvents(currentCalendarDate);
-    }
-  }, [view]);
+  }, [state.events, calendarEvents, calendarInstance]);
 
   return (
     <div className={`flex-1 flex flex-col h-full ${
@@ -568,7 +504,7 @@ export default function ToastCalendar() {
           </h2>
 
           {/* Loading indicator */}
-          {isLoadingGoogleEvents && (
+          {isLoadingCalendarData && (
             <div className="flex items-center space-x-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
               <span className={`text-sm ${
@@ -640,12 +576,12 @@ export default function ToastCalendar() {
           </button>
 
           {/* Sync Button */}
-          {googleCalendarService.isAuthenticated() && (
+          {isAuthenticated && (
             <button
               onClick={handleManualSync}
-              disabled={isLoadingGoogleEvents}
+              disabled={isLoadingCalendarData}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                isLoadingGoogleEvents
+                isLoadingCalendarData
                   ? 'opacity-50 cursor-not-allowed'
                   : state.isDarkMode
                   ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'

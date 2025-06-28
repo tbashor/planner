@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, ExternalLink } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import composioService, { ComposioTestResponse } from '../../services/composioService';
-import { googleCalendarService } from '../../services/googleCalendarService';
 
 
 // Extend Window interface for webkit speech recognition
@@ -22,6 +22,7 @@ declare global {
 
 export default function AiSidebar() {
   const { state, dispatch } = useApp();
+  const { authState } = useAuth();
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -113,8 +114,8 @@ export default function AiSidebar() {
       const available = await composioService.isServerAvailable();
       setServerAvailable(available);
 
-      // Check Google Calendar connection
-      const googleConnected = googleCalendarService.isAuthenticated();
+      // Check Google Calendar connection via Composio auth
+      const googleConnected = authState.isAuthenticated && authState.connectionStatus === 'connected';
       setIsGoogleCalendarConnected(googleConnected);
 
       if (!available) {

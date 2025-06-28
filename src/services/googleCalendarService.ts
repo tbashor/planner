@@ -1,4 +1,4 @@
-import { Event } from '../types';
+import { Event, Priority } from '../types';
 import { format, parseISO } from 'date-fns';
 import { oauthService } from './oauthService';
 
@@ -31,20 +31,97 @@ interface GoogleCalendarListResponse {
   nextPageToken?: string;
 }
 
+interface ExternalTokens {
+  access_token: string;
+  refresh_token?: string;
+  expires_at?: string;
+  token_type: string;
+  scope?: string;
+  userEmail: string;
+}
+
 class GoogleCalendarService {
   private readonly baseUrl = 'https://www.googleapis.com/calendar/v3';
+  private externalTokens: ExternalTokens | null = null;
 
   constructor() {
     console.log('🔧 Google Calendar Service initialized');
     console.log('- Base URL:', this.baseUrl);
-    console.log('- Using OAuth service for authentication');
+    console.log('- Using OAuth service for authentication (with external token support)');
   }
 
   /**
-   * Check if the user is authenticated
+   * Set external OAuth tokens (from Composio)
+   */
+  setExternalTokens(tokens: ExternalTokens): void {
+    this.externalTokens = tokens;
+    console.log(`🔑 External tokens set for user: ${tokens.userEmail}`);
+    console.log(`  - Access Token: ${tokens.access_token ? 'Present' : 'Missing'}`);
+    console.log(`  - Refresh Token: ${tokens.refresh_token ? 'Present' : 'Missing'}`);
+    console.log(`  - Expires At: ${tokens.expires_at || 'Unknown'}`);
+  }
+
+  /**
+   * Clear external tokens
+   */
+  clearExternalTokens(): void {
+    const userEmail = this.externalTokens?.userEmail;
+    this.externalTokens = null;
+    console.log(`🧹 External tokens cleared${userEmail ? ` for user: ${userEmail}` : ''}`);
+  }
+
+  /**
+   * Check if external tokens are available
+   */
+  hasExternalTokens(): boolean {
+    return this.externalTokens !== null && !!this.externalTokens.access_token;
+  }
+
+  /**
+   * Get current authentication method
+   */
+  getAuthenticationMethod(): 'external' | 'oauth' | 'none' {
+    if (this.hasExternalTokens()) {
+      return 'external';
+    } else if (oauthService.isAuthenticated()) {
+      return 'oauth';
+    } else {
+      return 'none';
+    }
+  }
+
+  /**
+   * Check if the user is authenticated (either via external tokens or OAuth)
    */
   isAuthenticated(): boolean {
-    return oauthService.isAuthenticated();
+    return this.hasExternalTokens() || oauthService.isAuthenticated();
+  }
+
+  /**
+   * Make an authenticated request using external tokens or OAuth service
+   */
+  private async makeAuthenticatedRequest(url: string, options: RequestInit = {}): Promise<Response> {
+    if (this.hasExternalTokens() && this.externalTokens) {
+      // Use external tokens
+      console.log(`🔑 Making request with external tokens for: ${this.externalTokens.userEmail}`);
+      
+      const headers = {
+        'Authorization': `${this.externalTokens.token_type || 'Bearer'} ${this.externalTokens.access_token}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      };
+
+      return fetch(url, {
+        ...options,
+        headers,
+      });
+    } else if (oauthService.isAuthenticated()) {
+      // Use OAuth service
+      console.log(`🔑 Making request with OAuth service`);
+      return oauthService.makeAuthenticatedRequest(url, options);
+    } else {
+      throw new Error('No authentication method available. Please authenticate first.');
+    }
   }
 
   /**
@@ -63,11 +140,17 @@ class GoogleCalendarService {
   }
 
   /**
-   * Get the authenticated user's email from Google's userinfo endpoint
+   * Get the authenticated user's email from external tokens or Google's userinfo endpoint
    */
   async getAuthenticatedUserEmail(): Promise<string | null> {
     try {
-      console.log('🔍 Retrieving authenticated user email from Google...');
+      // If using external tokens, return the email directly
+      if (this.hasExternalTokens() && this.externalTokens) {
+        console.log(`✅ Using external token email: ${this.externalTokens.userEmail}`);
+        return this.externalTokens.userEmail;
+      }
+
+      console.log('🔍 Retrieving authenticated user email from Google OAuth...');
       
       // Try multiple Google userinfo endpoints
       const endpoints = [
@@ -80,7 +163,7 @@ class GoogleCalendarService {
       for (const endpoint of endpoints) {
         try {
           console.log(`🔍 Trying endpoint: ${endpoint}`);
-          const response = await oauthService.makeAuthenticatedRequest(endpoint);
+          const response = await this.makeAuthenticatedRequest(endpoint);
           
           if (response.ok) {
             const userInfo = await response.json();
@@ -102,7 +185,7 @@ class GoogleCalendarService {
             try {
               const errorBody = await response.text();
               console.warn('Error response body:', errorBody);
-            } catch (e) {
+            } catch {
               // Ignore error reading response body
             }
           }
@@ -174,14 +257,14 @@ class GoogleCalendarService {
   async getCalendarList(): Promise<Array<{ id: string; summary: string; primary?: boolean }>> {
     try {
       const url = `${this.baseUrl}/users/me/calendarList`;
-      const response = await oauthService.makeAuthenticatedRequest(url);
+      const response = await this.makeAuthenticatedRequest(url);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch calendar list: ${response.statusText}`);
       }
 
       const data = await response.json();
-      return data.items.map((calendar: any) => ({
+      return data.items.map((calendar: { id: string; summary: string; primary?: boolean }) => ({
         id: calendar.id,
         summary: calendar.summary,
         primary: calendar.primary,
@@ -217,7 +300,7 @@ class GoogleCalendarService {
       }
 
       const url = `${this.baseUrl}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
-      const response = await oauthService.makeAuthenticatedRequest(url);
+      const response = await this.makeAuthenticatedRequest(url);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch events: ${response.statusText}`);
@@ -239,7 +322,7 @@ class GoogleCalendarService {
       const googleEvent = this.convertAppEventToGoogleEvent(event);
       
       const url = `${this.baseUrl}/calendars/${encodeURIComponent(calendarId)}/events`;
-      const response = await oauthService.makeAuthenticatedRequest(url, {
+      const response = await this.makeAuthenticatedRequest(url, {
         method: 'POST',
         body: JSON.stringify(googleEvent),
       });
@@ -266,7 +349,7 @@ class GoogleCalendarService {
       const googleEvent = this.convertAppEventToGoogleEvent(event);
       
       const url = `${this.baseUrl}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`;
-      const response = await oauthService.makeAuthenticatedRequest(url, {
+      const response = await this.makeAuthenticatedRequest(url, {
         method: 'PUT',
         body: JSON.stringify(googleEvent),
       });
@@ -292,7 +375,7 @@ class GoogleCalendarService {
       const googleEventId = eventId.replace('google_', '');
       
       const url = `${this.baseUrl}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`;
-      const response = await oauthService.makeAuthenticatedRequest(url, {
+      const response = await this.makeAuthenticatedRequest(url, {
         method: 'DELETE',
       });
 
@@ -311,7 +394,13 @@ class GoogleCalendarService {
   /**
    * Convert app Event to Google Calendar event format
    */
-  private convertAppEventToGoogleEvent(event: Event): any {
+  private convertAppEventToGoogleEvent(event: Event): {
+    summary: string;
+    description: string;
+    start: { dateTime: string; timeZone: string };
+    end: { dateTime: string; timeZone: string };
+    colorId: string;
+  } {
     const startDateTime = `${event.date}T${event.startTime}:00`;
     const endDateTime = `${event.date}T${event.endTime}:00`;
 
@@ -334,43 +423,48 @@ class GoogleCalendarService {
    * Convert Google Calendar events to app Event format
    */
   private convertGoogleEventsToAppEvents(googleEvents: GoogleCalendarEvent[]): Event[] {
-    return googleEvents
-      .filter(event => event.status !== 'cancelled')
-      .map(event => {
-        const startDateTime = event.start.dateTime || event.start.date;
-        const endDateTime = event.end.dateTime || event.end.date;
+    const convertedEvents: Event[] = [];
+    
+    for (const event of googleEvents) {
+      if (event.status === 'cancelled') {
+        continue;
+      }
 
-        if (!startDateTime || !endDateTime) {
-          return null;
-        }
+      const startDateTime = event.start.dateTime || event.start.date;
+      const endDateTime = event.end.dateTime || event.end.date;
 
-        const startDate = parseISO(startDateTime);
-        const endDate = parseISO(endDateTime);
+      if (!startDateTime || !endDateTime) {
+        continue;
+      }
 
-        // Determine if this is an all-day event
-        const isAllDay = !event.start.dateTime;
+      const startDate = parseISO(startDateTime);
+      const endDate = parseISO(endDateTime);
 
-        return {
-          id: `google_${event.id}`,
-          title: event.summary || 'Untitled Event',
-          startTime: isAllDay ? '00:00' : format(startDate, 'HH:mm'),
-          endTime: isAllDay ? '23:59' : format(endDate, 'HH:mm'),
-          date: format(startDate, 'yyyy-MM-dd'),
-          category: {
-            id: 'imported',
-            name: 'Google Calendar',
-            color: this.getColorFromColorId(event.colorId),
-            icon: 'Calendar',
-          },
-          priority: 'medium' as const,
-          description: event.description || '',
-          links: event.htmlLink ? [event.htmlLink] : [],
-          isCompleted: false,
-          isStatic: false,
+      // Determine if this is an all-day event
+      const isAllDay = !event.start.dateTime;
+
+      convertedEvents.push({
+        id: `google_${event.id}`,
+        title: event.summary || 'Untitled Event',
+        startTime: isAllDay ? '00:00' : format(startDate, 'HH:mm'),
+        endTime: isAllDay ? '23:59' : format(endDate, 'HH:mm'),
+        date: format(startDate, 'yyyy-MM-dd'),
+        category: {
+          id: 'imported',
+          name: 'Google Calendar',
           color: this.getColorFromColorId(event.colorId),
-        };
-      })
-      .filter((event): event is Event => event !== null);
+          icon: 'Calendar',
+        },
+        priority: 'medium' as Priority,
+        description: event.description || '',
+        links: event.htmlLink ? [event.htmlLink] : [],
+        isCompleted: false,
+        isStatic: false,
+        color: this.getColorFromColorId(event.colorId),
+      });
+    }
+    
+    return convertedEvents;
   }
 
   /**

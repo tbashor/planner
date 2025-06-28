@@ -1,10 +1,14 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { AppProvider, useApp } from './contexts/AppContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import MainLayout from './components/Layout/MainLayout';
 import OAuthCallback from './components/GoogleCalendar/OAuthCallback';
 import OnboardingWizard from './components/Onboarding/OnboardingWizard';
-import { mockEvents, mockAiSuggestions } from './data/mockData';
+import { mockAiSuggestions } from './data/mockData';
 import { generatePersonalizedSuggestions } from './utils/aiUtils';
+import { Event } from './types';
+import { oauthService } from './services/oauthService';
+import { googleCalendarService } from './services/googleCalendarService';
 
 interface OnboardingData {
   name: string;
@@ -19,19 +23,139 @@ interface OnboardingData {
 
 function AppContent() {
   const { state, dispatch } = useApp();
+  const { authState, authDispatch, checkConnectionStatus } = useAuth();
+  const authRestorationAttempted = useRef(false);
 
   // Check if this is an OAuth callback
   const isOAuthCallback = window.location.pathname === '/auth/callback' || 
                          window.location.search.includes('code=');
 
+  // Add authentication restoration logic
+  useEffect(() => {
+    const restoreAuthentication = async () => {
+      // Prevent multiple restoration attempts
+      if (authRestorationAttempted.current) {
+        console.log('⏭️ Authentication restoration already attempted, skipping');
+        return;
+      }
+      
+      authRestorationAttempted.current = true;
+      console.log('🔄 Checking authentication state on app startup...');
+      
+      // Skip restoration if handling OAuth callback
+      if (isOAuthCallback) {
+        console.log('⏭️ Skipping auth restoration - handling OAuth callback');
+        return;
+      }
+
+      // Add guard to prevent infinite loops
+      if (authState.connectionStatus === 'checking') {
+        console.log('⏭️ Already checking connection status, skipping');
+        return;
+      }
+
+      try {
+        // Check if OAuth tokens exist
+        const hasOAuthTokens = oauthService.isAuthenticated();
+        console.log('🔑 OAuth tokens available:', hasOAuthTokens);
+
+        if (hasOAuthTokens) {
+          // Try to get authenticated user email
+          const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+          console.log('📧 Retrieved authenticated user email:', userEmail);
+
+          if (userEmail && userEmail !== 'authenticated.user@gmail.com') {
+            // Test the connection to make sure tokens are valid
+            try {
+              const testResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+                headers: {
+                  'Authorization': `Bearer ${await oauthService.getValidAccessToken()}`,
+                },
+              });
+
+              if (testResponse.ok) {
+                console.log('✅ OAuth tokens are valid, restoring authentication');
+                
+                // Update auth context with valid authentication
+                authDispatch({ 
+                  type: 'SET_AUTHENTICATED', 
+                  payload: { userEmail } 
+                });
+
+                // Check Composio connection status only if not already authenticated with this email
+                if (authState.userEmail !== userEmail || authState.connectionStatus !== 'connected') {
+                  console.log('🔍 Checking Composio connection status...');
+                  await checkConnectionStatus(userEmail);
+                }
+              } else {
+                console.warn('⚠️ OAuth tokens are invalid, clearing OAuth state only');
+                await handleOAuthFailure();
+              }
+            } catch (error) {
+              console.error('❌ Error testing OAuth tokens:', error);
+              await handleOAuthFailure();
+            }
+          } else {
+            console.warn('⚠️ No valid user email found, clearing OAuth state only');
+            await handleOAuthFailure();
+          }
+        } else {
+          console.log('ℹ️ No OAuth tokens found');
+          // If user has completed onboarding but has no OAuth tokens, that's fine
+          // They just haven't connected Google Calendar yet
+          if (authState.userEmail && state.isOnboardingComplete) {
+            console.log('ℹ️ User has completed onboarding but no Google Calendar connection - this is normal');
+            // Only check Composio connection if we haven't already verified it recently
+            const timeSinceLastCheck = Date.now() - authState.lastChecked;
+            if (timeSinceLastCheck > 60000) { // Only check if more than 1 minute since last check
+              console.log('🔍 Checking Composio connection status (periodic check)...');
+              await checkConnectionStatus(authState.userEmail);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error during authentication restoration:', error);
+        // Only clear OAuth-related state, not the entire authentication
+        await handleOAuthFailure();
+      }
+    };
+
+    const handleOAuthFailure = async () => {
+      console.log('🧹 Clearing OAuth tokens only (preserving user authentication)');
+      
+      // Clear OAuth tokens
+      oauthService.clearTokens();
+      
+      // Clear Google Calendar service tokens
+      googleCalendarService.clearExternalTokens();
+      
+      // Don't clear the entire auth state - just mark as needing reconnection
+      // The user might have completed onboarding but just needs to reconnect Google Calendar
+      if (authState.userEmail) {
+        console.log('ℹ️ Preserving user authentication, marking Google Calendar as disconnected');
+        // We'll let the normal connection flow handle reconnection
+      } else {
+        // If no user email, then clear everything
+        authDispatch({ 
+          type: 'SET_DISCONNECTED', 
+          payload: 'Authentication expired - please reconnect' 
+        });
+      }
+    };
+
+    // Only run restoration if onboarding is complete and we haven't run this recently
+    if (state.isOnboardingComplete) {
+      restoreAuthentication();
+    }
+  }, [isOAuthCallback, state.isOnboardingComplete]);
+
   useEffect(() => {
     // Check for preserved AI events from reset
     const preservedAiEvents = localStorage.getItem('smartplan_preserved_ai_events');
     
-    // Only initialize mock data if not handling OAuth callback and onboarding is complete
-    // and we don't already have events loaded
+    // Only restore preserved AI events if not handling OAuth callback and onboarding is complete
     if (!isOAuthCallback && state.isOnboardingComplete && state.events.length === 0) {
-      let eventsToLoad = [...mockEvents];
+      let eventsToLoad: Event[] = [];
       
       // If we have preserved AI events, add them
       if (preservedAiEvents) {
@@ -147,6 +271,14 @@ function AppContent() {
 
     console.log('✅ Created user with authenticated email:', user.email);
     dispatch({ type: 'COMPLETE_ONBOARDING', payload: user });
+    
+    // Also authenticate with Composio auth context
+    authDispatch({ 
+      type: 'SET_AUTHENTICATED', 
+      payload: { userEmail: data.email } 
+    });
+    
+    console.log('🔐 Set Composio authentication for:', data.email);
   };
 
   // Render OAuth callback component if this is a callback
@@ -165,7 +297,9 @@ function AppContent() {
 function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
     </AppProvider>
   );
 }

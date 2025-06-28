@@ -295,6 +295,120 @@ class ComposioService {
       }),
     });
   }
+
+  /**
+   * Fetch Google Calendar events for a specific user using Composio tools
+   */
+  async fetchCalendarEvents(
+    userEmail: string, 
+    startDate: Date, 
+    endDate: Date,
+    calendarId: string = 'primary'
+  ): Promise<{ success: boolean; events?: UserCalendarEvent[]; error?: string; message?: string; timestamp: string }> {
+    if (!userEmail) {
+      throw new Error('User email is required for fetching calendar events');
+    }
+
+    console.log(`📅 Fetching calendar events for user ${userEmail} from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+    return this.makeRequest('/api/composio/calendar/events', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        calendarId
+      }),
+    });
+  }
+
+  /**
+   * Create a calendar event using Composio tools
+   */
+  async createCalendarEvent(
+    userEmail: string,
+    eventData: {
+      title: string;
+      description?: string;
+      startTime: string; // ISO string
+      endTime: string; // ISO string
+      calendarId?: string;
+      attendees?: string[];
+    }
+  ): Promise<{ success: boolean; event?: UserCalendarEvent; error?: string; timestamp: string }> {
+    if (!userEmail) {
+      throw new Error('User email is required for creating calendar events');
+    }
+
+    console.log(`📝 Creating calendar event for user ${userEmail}: ${eventData.title}`);
+
+    return this.makeRequest('/api/composio/calendar/create-event', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        ...eventData,
+        calendarId: eventData.calendarId || 'primary'
+      }),
+    });
+  }
+
+  /**
+   * Update a calendar event using Composio tools
+   */
+  async updateCalendarEvent(
+    userEmail: string,
+    eventId: string,
+    eventData: {
+      title?: string;
+      description?: string;
+      startTime?: string; // ISO string
+      endTime?: string; // ISO string
+      calendarId?: string;
+    }
+  ): Promise<{ success: boolean; event?: UserCalendarEvent; error?: string; timestamp: string }> {
+    if (!userEmail) {
+      throw new Error('User email is required for updating calendar events');
+    }
+
+    console.log(`✏️ Updating calendar event for user ${userEmail}: ${eventId}`);
+
+    return this.makeRequest('/api/composio/calendar/update-event', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        eventId,
+        ...eventData,
+        calendarId: eventData.calendarId || 'primary'
+      }),
+    });
+  }
+
+  /**
+   * Delete a calendar event using Composio tools
+   */
+  async deleteCalendarEvent(
+    userEmail: string,
+    eventId: string,
+    calendarId: string = 'primary'
+  ): Promise<{ success: boolean; error?: string; timestamp: string }> {
+    if (!userEmail) {
+      throw new Error('User email is required for deleting calendar events');
+    }
+
+    console.log(`🗑️ Deleting calendar event for user ${userEmail}: ${eventId}`);
+
+    return this.makeRequest('/api/composio/calendar/delete-event', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        eventId,
+        calendarId
+      }),
+    });
+  }
+
+  // Note: getGoogleTokens method removed - we now use Composio tools directly
+  // instead of extracting raw OAuth tokens
 }
 
 export const composioService = new ComposioService();
