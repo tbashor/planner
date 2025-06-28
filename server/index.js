@@ -27,10 +27,66 @@ const toolset = new VercelAIToolSet({
 const userConnections = new Map(); // userEmail -> connection data
 const userEntities = new Map(); // userEmail -> entityId
 
-// Helper function to clean up duplicate connections for a user
+// Helper function to wait for connection to become active
+async function waitForConnectionActive(userEmail, entityId, connectionId, maxWaitTime = 30000) {
+  const startTime = Date.now();
+  const pollInterval = 2000; // Check every 2 seconds
+  
+  console.log(`⏳ Waiting for connection ${connectionId} to become active for ${userEmail}...`);
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    try {
+      const entity = await toolset.client.getEntity(entityId);
+      const connections = await entity.getConnections();
+      
+      const targetConnection = connections.find(conn => conn.id === connectionId);
+      
+      if (targetConnection) {
+        console.log(`🔍 Connection ${connectionId} status: ${targetConnection.status}`);
+        
+        // Check for various "active" states
+        const activeStates = ['active', 'initiated', 'connected', 'ready'];
+        const isActive = targetConnection.status && 
+                        activeStates.some(state => 
+                          targetConnection.status.toLowerCase().includes(state.toLowerCase())
+                        );
+        
+        if (isActive) {
+          console.log(`✅ Connection ${connectionId} is now active for ${userEmail}`);
+          return targetConnection;
+        }
+        
+        // If still initializing, continue waiting
+        if (targetConnection.status && targetConnection.status.toLowerCase().includes('initializing')) {
+          console.log(`⏳ Connection ${connectionId} still initializing, waiting...`);
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        
+        // If in error state, return null
+        if (targetConnection.status && targetConnection.status.toLowerCase().includes('error')) {
+          console.error(`❌ Connection ${connectionId} is in error state: ${targetConnection.status}`);
+          return null;
+        }
+      } else {
+        console.warn(`⚠️ Connection ${connectionId} not found in entity connections`);
+        return null;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Error checking connection status: ${error.message}`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+  
+  console.warn(`⏰ Timeout waiting for connection ${connectionId} to become active`);
+  return null;
+}
+
+// Helper function to clean up duplicate connections more aggressively
 async function cleanupDuplicateConnections(userEmail, entityId) {
   try {
-    console.log(`🧹 Cleaning up duplicate connections for user: ${userEmail}`);
+    console.log(`🧹 Aggressively cleaning up duplicate connections for user: ${userEmail}`);
     
     const entity = await toolset.client.getEntity(entityId);
     const connections = await entity.getConnections();
@@ -46,60 +102,57 @@ async function cleanupDuplicateConnections(userEmail, entityId) {
     
     console.log(`🔍 Found ${googleConnections.length} Google Calendar connections for ${userEmail}`);
     
-    if (googleConnections.length > 1) {
-      // Keep the most recent active connection, delete the rest
-      const activeConnections = googleConnections.filter(conn => 
-        conn.status && conn.status.toLowerCase() === 'active'
-      );
-      
-      const initializingConnections = googleConnections.filter(conn => 
-        !conn.status || conn.status.toLowerCase() === 'initializing'
-      );
-      
-      // If we have active connections, delete all initializing ones
-      if (activeConnections.length > 0) {
-        console.log(`✅ Found ${activeConnections.length} active connections, deleting ${initializingConnections.length} initializing ones`);
-        
-        for (const conn of initializingConnections) {
-          try {
-            await entity.deleteConnection(conn.id);
-            console.log(`🗑️ Deleted initializing connection: ${conn.id}`);
-          } catch (deleteError) {
-            console.warn(`⚠️ Failed to delete connection ${conn.id}:`, deleteError);
-          }
-        }
-        
-        // Return the first active connection
-        return activeConnections[0];
-      } else {
-        // If no active connections, keep the most recent one and delete the rest
-        const sortedConnections = googleConnections.sort((a, b) => 
-          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-        );
-        
-        const keepConnection = sortedConnections[0];
-        const deleteConnections = sortedConnections.slice(1);
-        
-        console.log(`🔄 No active connections, keeping most recent: ${keepConnection.id}, deleting ${deleteConnections.length} others`);
-        
-        for (const conn of deleteConnections) {
-          try {
-            await entity.deleteConnection(conn.id);
-            console.log(`🗑️ Deleted duplicate connection: ${conn.id}`);
-          } catch (deleteError) {
-            console.warn(`⚠️ Failed to delete connection ${conn.id}:`, deleteError);
-          }
-        }
-        
-        return keepConnection;
-      }
-    } else if (googleConnections.length === 1) {
-      console.log(`✅ Only one Google Calendar connection found for ${userEmail}`);
-      return googleConnections[0];
-    } else {
-      console.log(`⚠️ No Google Calendar connections found for ${userEmail}`);
+    if (googleConnections.length === 0) {
+      console.log(`✅ No Google Calendar connections found for ${userEmail}`);
       return null;
     }
+    
+    if (googleConnections.length === 1) {
+      const connection = googleConnections[0];
+      console.log(`✅ Single connection found: ${connection.id} with status: ${connection.status}`);
+      return connection;
+    }
+    
+    // Multiple connections found - clean them up
+    console.log(`🔄 Multiple connections found (${googleConnections.length}), cleaning up...`);
+    
+    // Sort by creation date (newest first) and status priority
+    const sortedConnections = googleConnections.sort((a, b) => {
+      // Prioritize active connections
+      const aActive = a.status && ['active', 'initiated', 'connected', 'ready'].some(s => 
+        a.status.toLowerCase().includes(s.toLowerCase())
+      );
+      const bActive = b.status && ['active', 'initiated', 'connected', 'ready'].some(s => 
+        b.status.toLowerCase().includes(s.toLowerCase())
+      );
+      
+      if (aActive && !bActive) return -1;
+      if (!aActive && bActive) return 1;
+      
+      // Then by creation date (newest first)
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
+    
+    // Keep the best connection (first in sorted list)
+    const keepConnection = sortedConnections[0];
+    const deleteConnections = sortedConnections.slice(1);
+    
+    console.log(`🔄 Keeping connection: ${keepConnection.id} (status: ${keepConnection.status})`);
+    console.log(`🗑️ Deleting ${deleteConnections.length} duplicate connections`);
+    
+    // Delete duplicate connections
+    for (const conn of deleteConnections) {
+      try {
+        await entity.deleteConnection(conn.id);
+        console.log(`🗑️ Deleted duplicate connection: ${conn.id}`);
+      } catch (deleteError) {
+        console.warn(`⚠️ Failed to delete connection ${conn.id}:`, deleteError.message);
+      }
+    }
+    
+    return keepConnection;
   } catch (error) {
     console.error(`❌ Error cleaning up duplicate connections for ${userEmail}:`, error);
     return null;
@@ -144,19 +197,53 @@ async function setupUserConnectionIfNotExists(userEmail) {
       if (cleanConnection) {
         console.log(`✅ Using cleaned connection for ${userEmail}:`, cleanConnection.id);
         
-        // Store connection info
-        userConnections.set(userEmail, {
-          entityId,
-          connectionId: cleanConnection.id,
-          status: cleanConnection.status || 'active',
-          connectedAt: new Date().toISOString()
-        });
+        // Check if this connection is active or can become active
+        const activeStates = ['active', 'initiated', 'connected', 'ready'];
+        const isActive = cleanConnection.status && 
+                        activeStates.some(state => 
+                          cleanConnection.status.toLowerCase().includes(state.toLowerCase())
+                        );
         
-        return cleanConnection;
+        if (isActive) {
+          // Store connection info as active
+          userConnections.set(userEmail, {
+            entityId,
+            connectionId: cleanConnection.id,
+            status: 'active',
+            connectedAt: new Date().toISOString()
+          });
+          
+          return cleanConnection;
+        } else if (cleanConnection.status && cleanConnection.status.toLowerCase().includes('initializing')) {
+          // Wait for it to become active
+          console.log(`⏳ Connection is initializing, waiting for it to become active...`);
+          
+          const activeConnection = await waitForConnectionActive(userEmail, entityId, cleanConnection.id);
+          
+          if (activeConnection) {
+            userConnections.set(userEmail, {
+              entityId,
+              connectionId: activeConnection.id,
+              status: 'active',
+              connectedAt: new Date().toISOString()
+            });
+            
+            return activeConnection;
+          } else {
+            console.warn(`⚠️ Connection failed to become active, creating new one`);
+            // Delete the failed connection and create a new one
+            try {
+              await entity.deleteConnection(cleanConnection.id);
+              console.log(`🗑️ Deleted failed connection: ${cleanConnection.id}`);
+            } catch (deleteError) {
+              console.warn(`⚠️ Failed to delete failed connection:`, deleteError);
+            }
+          }
+        }
       }
       
-      // If no existing connection after cleanup, create a new one
-      console.log(`🔄 No existing Google Calendar connection found, creating new one for ${userEmail}`);
+      // If no existing connection or existing connection failed, create a new one
+      console.log(`🔄 Creating new Google Calendar connection for ${userEmail}`);
       
       // Create new connection with proper configuration
       const connectionConfig = {
@@ -241,7 +328,14 @@ async function getUserTools(userEmail) {
                               appName === 'google_calendar' ||
                               appName === 'google-calendar' ||
                               appName === 'calendar';
-      const isActive = !conn.status || conn.status.toLowerCase() === 'active' || conn.status.toLowerCase() === 'initiated';
+      
+      // Be more flexible with status checking
+      const activeStates = ['active', 'initiated', 'connected', 'ready'];
+      const isActive = !conn.status || // No status might mean active
+                      activeStates.some(state => 
+                        conn.status.toLowerCase().includes(state.toLowerCase())
+                      );
+      
       return isGoogleCalendar && isActive;
     });
     
@@ -258,7 +352,26 @@ async function getUserTools(userEmail) {
       });
       
       if (anyGoogleConnection) {
-        throw new Error(`Google Calendar connection for ${userEmail} is still initializing. Please wait for authentication to complete.`);
+        // If connection is initializing, wait for it to become active
+        if (anyGoogleConnection.status && anyGoogleConnection.status.toLowerCase().includes('initializing')) {
+          console.log(`⏳ Connection is initializing, waiting for it to become active...`);
+          
+          const activeConnection = await waitForConnectionActive(userEmail, entityId, anyGoogleConnection.id, 15000);
+          
+          if (activeConnection) {
+            console.log(`✅ Connection became active, proceeding with tools...`);
+            // Update stored connection status
+            const connectionData = userConnections.get(userEmail);
+            if (connectionData) {
+              connectionData.status = 'active';
+              userConnections.set(userEmail, connectionData);
+            }
+          } else {
+            throw new Error(`Google Calendar connection for ${userEmail} is taking too long to initialize. Please try again in a moment.`);
+          }
+        } else {
+          throw new Error(`Google Calendar connection for ${userEmail} is still initializing. Please wait for authentication to complete.`);
+        }
       } else {
         throw new Error(`No Google Calendar connection found for ${userEmail}. Please complete the Google Calendar authentication.`);
       }
@@ -333,33 +446,48 @@ async function checkConnectionStatus(userEmail) {
         const entity = await toolset.client.getEntity(entityId);
         const connections = await entity.getConnections();
         
-        const activeConnection = connections.find(conn => {
-          const appName = (conn.appName || conn.app || '').toLowerCase();
-          const isGoogleCalendar = appName === 'googlecalendar' || 
-                                  appName === 'google_calendar' ||
-                                  appName === 'google-calendar' ||
-                                  appName === 'calendar';
-          const isActive = conn.status && (conn.status.toLowerCase() === 'active' || conn.status.toLowerCase() === 'initiated');
-          return isGoogleCalendar && isActive;
-        });
+        const targetConnection = connections.find(conn => conn.id === connectionData.connectionId);
         
-        if (activeConnection) {
-          // Update status to active
-          connectionData.status = 'active';
-          connectionData.connectionId = activeConnection.id;
-          userConnections.set(userEmail, connectionData);
+        if (targetConnection) {
+          console.log(`🔍 Checking pending connection ${targetConnection.id} status: ${targetConnection.status}`);
           
-          return { 
-            status: 'active', 
-            message: 'Connection is active',
-            toolsAvailable: 9 // We have 9 Google Calendar tools
-          };
+          // Check for active states
+          const activeStates = ['active', 'initiated', 'connected', 'ready'];
+          const isActive = targetConnection.status && 
+                          activeStates.some(state => 
+                            targetConnection.status.toLowerCase().includes(state.toLowerCase())
+                          );
+          
+          if (isActive) {
+            // Update status to active
+            connectionData.status = 'active';
+            connectionData.connectionId = targetConnection.id;
+            userConnections.set(userEmail, connectionData);
+            
+            return { 
+              status: 'active', 
+              message: 'Connection is active',
+              toolsAvailable: 9 // We have 9 Google Calendar tools
+            };
+          } else if (targetConnection.status && targetConnection.status.toLowerCase().includes('initializing')) {
+            return { 
+              status: 'pending', 
+              message: 'Connection is still initializing - please wait',
+              redirectUrl: connectionData.redirectUrl,
+              needsSetup: false
+            };
+          } else {
+            return { 
+              status: 'error', 
+              message: `Connection failed with status: ${targetConnection.status}`,
+              needsSetup: true
+            };
+          }
         } else {
           return { 
-            status: 'pending', 
-            message: 'Connection pending authentication',
-            redirectUrl: connectionData.redirectUrl,
-            needsSetup: false
+            status: 'error', 
+            message: 'Connection not found in entity',
+            needsSetup: true
           };
         }
       } catch (checkError) {
@@ -405,7 +533,8 @@ async function checkConnectionStatus(userEmail) {
           message: 'Google Calendar connection not found - needs authentication',
           needsSetup: true
         };
-      } else if (toolsError.message.includes('still initializing')) {
+      } else if (toolsError.message.includes('still initializing') || 
+                 toolsError.message.includes('taking too long')) {
         return {
           status: 'pending',
           message: 'Google Calendar connection is still initializing - please wait',
@@ -616,7 +745,7 @@ app.post('/api/ai/send-message', async (req, res) => {
         errorMessage += 'It looks like your Google Calendar connection needs to be set up. Please use the "Setup Connection" button to authenticate.';
       } else if (toolsError.message.includes('No connections available')) {
         errorMessage += 'Please complete the Google Calendar authentication process first.';
-      } else if (toolsError.message.includes('still initializing')) {
+      } else if (toolsError.message.includes('still initializing') || toolsError.message.includes('taking too long')) {
         errorMessage += 'Your Google Calendar connection is still being set up. Please wait a moment and try again.';
         needsSetup = false;
       } else {
@@ -947,6 +1076,7 @@ app.listen(PORT, () => {
   console.log('🔐 User-specific calendar management with complete data isolation');
   console.log('🎯 Composio Google Calendar tools available to the AI agent');
   console.log('🧹 Automatic cleanup of duplicate connections');
+  console.log('⏳ Smart waiting for connections to become active');
   console.log('');
   console.log('🎯 To use the application:');
   console.log('   👉 Visit: http://localhost:5173');
