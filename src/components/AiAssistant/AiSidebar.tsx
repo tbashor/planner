@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Send, Mic, Brain, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Zap, ExternalLink, MessageSquare, User } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -37,6 +37,13 @@ export default function AiSidebar() {
   const [setupRedirectUrl, setSetupRedirectUrl] = useState<string | null>(null);
   const [lastSetupAttempt, setLastSetupAttempt] = useState<number>(0);
   const [isCheckingConnections, setIsCheckingConnections] = useState<boolean>(false);
+
+  // Chat scrolling refs and state
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Helper function to validate if an email is real (not a fallback) - memoized to prevent excessive calls
   const isValidRealEmail = useCallback((email: string): boolean => {
@@ -127,6 +134,87 @@ export default function AiSidebar() {
       }
     };
   }, [state.chatMessages]);
+
+  // Auto-scroll functionality
+  const scrollToBottom = useCallback((force: boolean = false) => {
+    if (messagesEndRef.current && (shouldAutoScroll || force)) {
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'end'
+      });
+    }
+  }, [shouldAutoScroll]);
+
+  // Check if user is near bottom of chat
+  const isNearBottom = useCallback(() => {
+    if (!chatContainerRef.current) return true;
+    
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    const threshold = 100; // pixels from bottom
+    
+    return scrollHeight - scrollTop - clientHeight < threshold;
+  }, []);
+
+  // Handle scroll events to detect user scrolling
+  const handleScroll = useCallback(() => {
+    if (!chatContainerRef.current) return;
+
+    const nearBottom = isNearBottom();
+    
+    // If user scrolled up significantly, disable auto-scroll
+    if (!nearBottom && !isUserScrolling) {
+      setIsUserScrolling(true);
+      setShouldAutoScroll(false);
+    }
+    
+    // If user scrolled back to bottom, re-enable auto-scroll
+    if (nearBottom && isUserScrolling) {
+      setIsUserScrolling(false);
+      setShouldAutoScroll(true);
+    }
+
+    // Clear any existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    // Set a timeout to detect when scrolling stops
+    scrollTimeoutRef.current = setTimeout(() => {
+      if (nearBottom) {
+        setShouldAutoScroll(true);
+        setIsUserScrolling(false);
+      }
+    }, 150);
+  }, [isNearBottom, isUserScrolling]);
+
+  // Auto-scroll when new messages are added
+  useEffect(() => {
+    if (state.chatMessages.length > 0) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
+  }, [state.chatMessages.length, scrollToBottom]);
+
+  // Auto-scroll when processing state changes
+  useEffect(() => {
+    if (isProcessingMessage) {
+      // Force scroll when processing starts
+      setTimeout(() => {
+        scrollToBottom(true);
+      }, 100);
+    }
+  }, [isProcessingMessage, scrollToBottom]);
+
+  // Cleanup scroll timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Check server availability and connections - debounced to prevent excessive calls
   const checkServerAndConnections = useCallback(async () => {
@@ -915,9 +1003,11 @@ export default function AiSidebar() {
         )}
       </div>
 
-      {/* Chat Messages */}
+      {/* Chat Messages with Auto-Scroll */}
       <div className="flex-1 flex flex-col min-h-0">
         <div 
+          ref={chatContainerRef}
+          onScroll={handleScroll}
           className={`flex-1 overflow-y-auto p-4 space-y-4 ${
             state.isDarkMode ? 'scrollbar-dark' : 'scrollbar-light'
           }`}
@@ -987,7 +1077,30 @@ export default function AiSidebar() {
               </div>
             </div>
           )}
+
+          {/* Invisible element to scroll to */}
+          <div ref={messagesEndRef} />
         </div>
+
+        {/* Auto-scroll indicator */}
+        {!shouldAutoScroll && (
+          <div className="px-4 py-2">
+            <button
+              onClick={() => {
+                setShouldAutoScroll(true);
+                setIsUserScrolling(false);
+                scrollToBottom(true);
+              }}
+              className={`w-full text-xs py-2 px-3 rounded-lg transition-colors ${
+                state.isDarkMode
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-blue-500 text-white hover:bg-blue-600'
+              }`}
+            >
+              ↓ Scroll to latest messages
+            </button>
+          </div>
+        )}
 
         {/* Chat Input */}
         <div className={`p-4 border-t flex-shrink-0 ${
