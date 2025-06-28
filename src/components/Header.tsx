@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Settings, Moon, Sun, RotateCcw, Calendar, BellRing, Shield, Sparkles, Trash2, Save } from 'lucide-react';
+import { Search, Bell, Settings, Moon, Sun, RotateCcw, Calendar, BellRing, Shield, Sparkles, Trash2, Save, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { oauthService } from '../services/oauthService';
 import { googleCalendarService } from '../services/googleCalendarService';
@@ -11,8 +11,194 @@ export default function Header() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [authStatus, setAuthStatus] = useState<{
+    isAuthenticated: boolean;
+    isExpired: boolean;
+    needsRefresh: boolean;
+    isRefreshing: boolean;
+    lastChecked: number;
+  }>({
+    isAuthenticated: false,
+    isExpired: false,
+    needsRefresh: false,
+    isRefreshing: false,
+    lastChecked: 0,
+  });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Authentication status monitoring
+  const checkAuthenticationStatus = async () => {
+    try {
+      const now = Date.now();
+      
+      // Skip if checked recently (within 30 seconds), unless this is initial load
+      if (now - authStatus.lastChecked < 30000 && authStatus.lastChecked > 0) {
+        return;
+      }
+
+      // Check if we're returning from OAuth callback
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code');
+      const state = urlParams.get('state');
+      
+      if (code && state) {
+        console.log('🔄 OAuth callback detected in header, processing...');
+        try {
+          await oauthService.exchangeCodeForTokens(code, state);
+          console.log('✅ OAuth tokens processed successfully');
+          
+          // Clear URL parameters
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // Add success message
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `auth_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: '✅ Google Calendar authentication successful! Your connection has been restored.',
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          console.error('❌ OAuth callback processing failed:', error);
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `auth_callback_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: '❌ Authentication callback failed. Please try re-authenticating again.',
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      }
+
+      const isAuthenticated = oauthService.isAuthenticated();
+      const tokens = oauthService.getStoredTokens();
+      
+      let isExpired = false;
+      let needsRefresh = false;
+
+      if (tokens) {
+        const tokenData = tokens as unknown as { expires_at?: number };
+        const expiresAt = tokenData.expires_at;
+        if (expiresAt) {
+          isExpired = Date.now() >= expiresAt;
+          // Need refresh if expires within 10 minutes
+          needsRefresh = Date.now() >= (expiresAt - 10 * 60 * 1000);
+        }
+      }
+
+      setAuthStatus({
+        isAuthenticated,
+        isExpired,
+        needsRefresh,
+        isRefreshing: false,
+        lastChecked: now,
+      });
+
+      // Automatically try to refresh if needed and not already refreshing
+      if (needsRefresh && !authStatus.isRefreshing && tokens && (tokens as unknown as { refresh_token?: string }).refresh_token) {
+        attemptTokenRefresh();
+      }
+    } catch (error) {
+      console.error('❌ Error checking authentication status:', error);
+    }
+  };
+
+  const attemptTokenRefresh = async () => {
+    try {
+      setAuthStatus(prev => ({ ...prev, isRefreshing: true }));
+      
+      const refreshedTokens = await oauthService.refreshAccessToken();
+      
+      if (refreshedTokens) {
+        console.log('✅ Tokens refreshed successfully');
+        
+        // Update auth status
+        setAuthStatus(prev => ({
+          ...prev,
+          isAuthenticated: true,
+          isExpired: false,
+          needsRefresh: false,
+          isRefreshing: false,
+          lastChecked: Date.now(),
+        }));
+
+        // Add success message to chat
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `auth_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: '🔄 Authentication refreshed automatically. Your Google Calendar connection is active.',
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } else {
+        throw new Error('Token refresh failed');
+      }
+    } catch (error) {
+      console.error('❌ Token refresh failed:', error);
+      
+      setAuthStatus(prev => ({
+        ...prev,
+        isAuthenticated: false,
+        isExpired: true,
+        needsRefresh: true,
+        isRefreshing: false,
+        lastChecked: Date.now(),
+      }));
+
+      // Add warning message to chat
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `auth_warning_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: '⚠️ Your Google Calendar authentication has expired. Please re-authenticate using the settings menu to restore full functionality.',
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  };
+
+  const handleManualReauth = async () => {
+    try {
+      console.log('🔄 Starting manual re-authentication...');
+      
+      // Add message about starting re-auth
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `reauth_start_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: '🔄 Starting re-authentication process. You\'ll be redirected to Google to confirm your access.',
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      const authUrl = await googleCalendarService.getAuthUrl();
+      window.location.href = authUrl;
+    } catch (error) {
+      console.error('❌ Error starting re-authentication:', error);
+      
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: `reauth_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'ai',
+          content: '❌ Failed to start re-authentication. Please try again or contact support if the issue persists.',
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+    
+    setShowSettingsMenu(false);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,6 +357,17 @@ export default function Header() {
     setShowSettingsMenu(false);
   };
 
+  // Authentication status monitoring
+  useEffect(() => {
+    // Check immediately on mount
+    checkAuthenticationStatus();
+    
+    // Set up interval to check authentication status periodically
+    const authCheckInterval = setInterval(checkAuthenticationStatus, 60000); // Check every minute
+    
+    return () => clearInterval(authCheckInterval);
+  }, []); // Empty dependency array to only run on mount
+
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -242,6 +439,38 @@ export default function Header() {
 
             {/* Right Side Actions */}
             <div className="flex items-center space-x-4">
+              {/* Authentication Status Indicator */}
+              {authStatus.isExpired && (
+                <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
+                  state.isDarkMode 
+                    ? 'bg-red-900 bg-opacity-30 text-red-400' 
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>Auth Expired</span>
+                </div>
+              )}
+              {authStatus.needsRefresh && !authStatus.isExpired && (
+                <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
+                  state.isDarkMode 
+                    ? 'bg-yellow-900 bg-opacity-30 text-yellow-400' 
+                    : 'bg-yellow-100 text-yellow-700'
+                }`}>
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>Auth Expires Soon</span>
+                </div>
+              )}
+              {authStatus.isRefreshing && (
+                <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
+                  state.isDarkMode 
+                    ? 'bg-blue-900 bg-opacity-30 text-blue-400' 
+                    : 'bg-blue-100 text-blue-700'
+                }`}>
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  <span>Refreshing...</span>
+                </div>
+              )}
+
               {/* Theme Toggle */}
               <button
                 onClick={toggleTheme}
@@ -336,33 +565,100 @@ export default function Header() {
                       </div>
                     </button>
 
-                    {/* Google Calendar Connection */}
-                    <button
-                      onClick={handleReconnectGoogleCalendar}
-                      className={`w-full text-left px-4 py-3 text-sm hover:bg-opacity-80 transition-colors duration-200 flex items-center space-x-3 ${
-                        state.isDarkMode 
-                          ? 'text-blue-400 hover:bg-gray-700' 
-                          : 'text-blue-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <Calendar className="h-4 w-4" />
-                      <div>
-                        <div className="font-medium flex items-center space-x-2">
-                          <span>Google Calendar</span>
-                          {isGoogleCalendarConnected && (
+                    {/* Google Calendar Connection with Authentication Status */}
+                    <div className={`px-4 py-3 border-b ${
+                      state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
+                    }`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center space-x-2">
+                          <Calendar className="h-4 w-4" />
+                          <span className={`font-medium ${
+                            state.isDarkMode ? 'text-white' : 'text-gray-900'
+                          }`}>
+                            Google Calendar
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          {authStatus.isRefreshing && (
+                            <RefreshCw className="h-3 w-3 text-blue-500 animate-spin" />
+                          )}
+                          {authStatus.isAuthenticated && !authStatus.isExpired && (
                             <Shield className="h-3 w-3 text-green-500" />
                           )}
-                        </div>
-                        <div className={`text-xs ${
-                          state.isDarkMode ? 'text-gray-500' : 'text-gray-500'
-                        }`}>
-                          {isGoogleCalendarConnected 
-                            ? 'Reconnect to different account' 
-                            : 'Connect your Google Calendar'
-                          }
+                          {authStatus.isExpired && (
+                            <AlertTriangle className="h-3 w-3 text-red-500" />
+                          )}
+                          {authStatus.needsRefresh && !authStatus.isExpired && (
+                            <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                          )}
                         </div>
                       </div>
-                    </button>
+                      
+                      <div className={`text-xs mb-3 ${
+                        state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+                      }`}>
+                        {authStatus.isRefreshing 
+                          ? 'Refreshing authentication...'
+                          : authStatus.isExpired
+                            ? 'Authentication expired - click to re-authenticate'
+                            : authStatus.needsRefresh
+                              ? 'Authentication expires soon - will auto-refresh'
+                              : authStatus.isAuthenticated
+                                ? 'Connected and authenticated'
+                                : 'Not connected'
+                        }
+                      </div>
+
+                      <div className="space-y-2">
+                        {/* Re-authenticate button (shown when expired) */}
+                        {authStatus.isExpired && (
+                          <button
+                            onClick={handleManualReauth}
+                            disabled={authStatus.isRefreshing}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
+                              authStatus.isRefreshing
+                                ? 'opacity-50 cursor-not-allowed'
+                                : state.isDarkMode 
+                                  ? 'text-red-400 hover:bg-gray-700 bg-red-900 bg-opacity-20' 
+                                  : 'text-red-600 hover:bg-red-50 bg-red-50'
+                            }`}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            <span>Re-authenticate with Google</span>
+                          </button>
+                        )}
+
+                        {/* Reconnect to different account (shown when authenticated) */}
+                        {authStatus.isAuthenticated && !authStatus.isExpired && (
+                          <button
+                            onClick={handleReconnectGoogleCalendar}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
+                              state.isDarkMode 
+                                ? 'text-blue-400 hover:bg-gray-700' 
+                                : 'text-blue-600 hover:bg-blue-50'
+                            }`}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Connect different account</span>
+                          </button>
+                        )}
+
+                        {/* First time connection (shown when not connected) */}
+                        {!authStatus.isAuthenticated && !authStatus.isExpired && (
+                          <button
+                            onClick={handleManualReauth}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
+                              state.isDarkMode 
+                                ? 'text-green-400 hover:bg-gray-700' 
+                                : 'text-green-600 hover:bg-green-50'
+                            }`}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            <span>Connect Google Calendar</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
                     {/* Notification Settings */}
                     <button

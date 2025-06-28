@@ -20,6 +20,7 @@ export interface ComposioConnectionResponse {
   connectionId?: string;
   redirectUrl?: string;
   status?: string;
+  needsOAuthCompletion?: boolean;
   message?: string;
   error?: string;
   timestamp: string;
@@ -117,25 +118,20 @@ class ComposioService {
   }
 
   /**
-   * Setup Composio connection using existing Google OAuth tokens
+   * Setup Composio connection using proper OAuth flow (following Composio documentation)
    */
-  async setupUserConnectionWithTokens(userEmail: string, accessToken: string, refreshToken?: string): Promise<ComposioConnectionResponse> {
+  async setupUserConnectionWithOAuth(userEmail: string, redirectUrl?: string): Promise<ComposioConnectionResponse> {
     if (!userEmail) {
-      throw new Error('User email is required for Composio connection setup');
+      throw new Error('User email is required for Composio OAuth connection setup');
     }
 
-    if (!accessToken) {
-      throw new Error('Access token is required for Composio connection setup');
-    }
+    console.log(`🔗 Setting up Composio OAuth connection for user: ${userEmail}`);
 
-    console.log(`🔗 Setting up Composio connection using existing OAuth tokens for user: ${userEmail}`);
-
-    return this.makeRequest('/api/composio/setup-connection-with-tokens', {
+    return this.makeRequest('/api/composio/setup-connection-with-oauth', {
       method: 'POST',
       body: JSON.stringify({ 
         userEmail, 
-        accessToken, 
-        refreshToken 
+        redirectUrl 
       }),
     });
   }
@@ -281,45 +277,23 @@ class ComposioService {
   }
 
   /**
-   * Poll connection status until it becomes active or times out
+   * Poll connection status until it becomes active or times out (server-side polling)
    */
-  async pollConnectionStatus(userEmail: string, maxAttempts: number = 10, intervalMs: number = 3000): Promise<boolean> {
+  async pollConnectionStatus(userEmail: string, maxAttempts: number = 10, intervalMs: number = 3000): Promise<{ success: boolean; status?: string; error?: string; attempts?: number }> {
     if (!userEmail) {
       throw new Error('User email is required for polling connection status');
     }
 
-    console.log(`🔄 Polling connection status for ${userEmail} (max ${maxAttempts} attempts)`);
+    console.log(`🔄 Starting server-side polling for ${userEmail} (max ${maxAttempts} attempts)`);
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const statusResult = await this.checkConnectionStatus(userEmail);
-        
-        if (statusResult.success && statusResult.status === 'active') {
-          console.log(`✅ Connection became active for ${userEmail} after ${attempt} attempts`);
-          return true;
-        }
-        
-        if (statusResult.success && statusResult.status === 'error') {
-          console.error(`❌ Connection failed for ${userEmail}:`, statusResult.message);
-          return false;
-        }
-        
-        console.log(`⏳ Attempt ${attempt}/${maxAttempts}: Connection status for ${userEmail}: ${statusResult.status}`);
-        
-        if (attempt < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, intervalMs));
-        }
-      } catch (error) {
-        console.warn(`⚠️ Error polling connection status (attempt ${attempt}):`, error);
-        
-        if (attempt < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, intervalMs));
-        }
-      }
-    }
-    
-    console.warn(`⏰ Connection polling timed out for ${userEmail} after ${maxAttempts} attempts`);
-    return false;
+    return this.makeRequest('/api/composio/poll-connection-status', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        maxAttempts, 
+        intervalMs 
+      }),
+    });
   }
 }
 

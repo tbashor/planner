@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, ExternalLink, RefreshCw, Calendar, User, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, Calendar, AlertCircle, Loader2 } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
-import { googleCalendarService } from '../../services/googleCalendarService';
-import { oauthService } from '../../services/oauthService';
+
 import composioService from '../../services/composioService';
 
 interface OnboardingData {
@@ -25,6 +24,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [currentStep, setCurrentStep] = useState(1);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authStep, setAuthStep] = useState<'idle' | 'popup' | 'polling'>('idle');
   const [authStatus, setAuthStatus] = useState<{
     googleAuthenticated: boolean;
     composioConnected: boolean;
@@ -56,8 +56,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const totalSteps = 8;
 
-  // Ref to track setup state synchronously (prevents race conditions)
-  const isSettingUpComposioRef = useRef(false);
+
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -116,139 +115,74 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }, []);
 
   const checkAuthenticationStatus = async () => {
-    console.log('🔍 Checking authentication status...');
+    console.log('🔍 Checking Composio authentication status...');
     setAuthStatus(prev => ({ ...prev, isCheckingAuth: true }));
     setAuthError(null);
+    setAuthStep('idle');
 
     try {
-      // Check if we're returning from OAuth callback
+      // Check if we're returning from Composio OAuth callback
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get('code');
       const state = urlParams.get('state');
       
       if (code && state) {
-        console.log('🔄 OAuth callback detected, processing...');
+        console.log('🔄 Composio OAuth callback detected, processing...');
         setIsAuthenticating(true);
         
         // Clear URL parameters
         window.history.replaceState({}, document.title, window.location.pathname);
         
-        // Wait a moment for the OAuth callback to be processed
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-
-      // Check Google Calendar authentication using OAuth service directly
-      const isGoogleAuthenticated = oauthService.isAuthenticated();
-      console.log('🔍 Google authenticated:', isGoogleAuthenticated);
-
-      if (isGoogleAuthenticated) {
-        // Try to get user email with better error handling
-        let userEmail: string | null = null;
-        let userName: string = '';
-        let hasValidEmail = false;
-
-        try {
-          // First try to get user email from Google API
-          userEmail = await googleCalendarService.getAuthenticatedUserEmail();
-          console.log('📧 Retrieved user email from Google API:', userEmail);
+        // Wait for the OAuth callback to be processed by Composio
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Try to find which user this callback belongs to by checking recent connections
+        const storedEmail = localStorage.getItem('onboarding_user_email');
+        if (storedEmail && isValidRealEmail(storedEmail)) {
+          console.log(`🔍 Checking Composio connection for stored email: ${storedEmail}`);
           
-          // Validate if this is a real email
-          if (userEmail && isValidRealEmail(userEmail)) {
-            hasValidEmail = true;
-            console.log('✅ Valid real user email confirmed:', userEmail);
-          } else {
-            console.warn('⚠️ Email retrieved but not valid for Composio setup:', userEmail);
-            hasValidEmail = false;
-          }
-        } catch (emailError) {
-          console.warn('⚠️ Failed to get email from Google API, trying alternative method:', emailError);
-          
-          // Alternative: Try to get user info directly from OAuth service
           try {
-            const response = await oauthService.makeAuthenticatedRequest('https://www.googleapis.com/oauth2/v2/userinfo');
-            if (response.ok) {
-              const userInfo = await response.json();
-              userEmail = userInfo.email;
-              userName = userInfo.name || userInfo.given_name || '';
-              console.log('📧 Retrieved user info from OAuth service:', { email: userEmail, name: userName });
+            const testResult = await composioService.testUserConnection(storedEmail);
+            if (testResult.success && testResult.testResult) {
+              console.log('✅ Composio OAuth completed successfully');
               
-              // Validate the email from OAuth service too
-              if (userEmail && isValidRealEmail(userEmail)) {
-                hasValidEmail = true;
-                console.log('✅ Valid real user email confirmed from OAuth service:', userEmail);
-              } else {
-                console.warn('⚠️ Email from OAuth service not valid for Composio setup:', userEmail);
-                hasValidEmail = false;
-              }
+              const userName = storedEmail.split('@')[0]
+                .replace(/[._]/g, ' ')
+                .replace(/\b\w/g, l => l.toUpperCase());
+              
+              setAuthStatus(prev => ({
+                ...prev,
+                googleAuthenticated: true,
+                composioConnected: true,
+                userEmail: storedEmail,
+                userName,
+                isCheckingAuth: false,
+                hasValidEmail: true,
+                composioSkipped: false,
+              }));
+
+              updateData('email', storedEmail);
+              updateData('name', userName);
+              
+              // Clean up stored email
+              localStorage.removeItem('onboarding_user_email');
+              setIsAuthenticating(false);
+              return;
             }
-          } catch (altError) {
-            console.error('❌ Alternative email retrieval also failed:', altError);
+          } catch (testError) {
+            console.warn('⚠️ Error testing connection after OAuth callback:', testError);
           }
         }
-
-        // If we have a valid email, proceed normally
-        if (hasValidEmail && userEmail) {
-          // Extract name from email if we don't have it
-          if (!userName) {
-            userName = userEmail.split('@')[0]
-              .replace(/[._]/g, ' ')
-              .replace(/\b\w/g, l => l.toUpperCase());
-          }
-
-          // Update auth status
-          setAuthStatus(prev => ({
-            ...prev,
-            googleAuthenticated: true,
-            userEmail,
-            userName,
-            isCheckingAuth: false,
-            hasValidEmail: true,
-            composioSkipped: false,
-          }));
-
-          // Update form data
-          updateData('email', userEmail);
-          updateData('name', userName);
-
-          // Setup Composio connection with real email
-          await setupComposioConnection(userEmail);
-        } else {
-          // If we can't get a real email, skip Composio setup but allow onboarding to continue
-          console.warn('⚠️ Cannot get valid email for Composio setup, skipping Composio integration');
-          
-          // Use fallback for display purposes only
-          const fallbackEmail = userEmail || 'No email available';
-          const fallbackName = userName || 'User';
-
-          setAuthStatus(prev => ({
-            ...prev,
-            googleAuthenticated: true,
-            userEmail: fallbackEmail,
-            userName: fallbackName,
-            isCheckingAuth: false,
-            hasValidEmail: false,
-            composioConnected: false,
-            composioSkipped: true, // Mark that we skipped Composio
-          }));
-
-          updateData('email', fallbackEmail);
-          updateData('name', fallbackName);
-
-          // Don't setup Composio with invalid email
-          console.log('🚫 Skipping Composio setup - no valid email available');
-        }
-      } else {
-        console.log('❌ Google not authenticated');
-        setAuthStatus(prev => ({
-          ...prev,
-          googleAuthenticated: false,
-          isCheckingAuth: false,
-          hasValidEmail: false,
-          composioSkipped: false,
-        }));
       }
+
+      // If no active OAuth callback, just check current state
+      setAuthStatus(prev => ({
+        ...prev,
+        isCheckingAuth: false,
+      }));
+      
     } catch (error) {
-      console.error('❌ Error checking authentication status:', error);
+      console.error('❌ Error checking Composio authentication status:', error);
       setAuthError(error instanceof Error ? error.message : 'Authentication check failed');
       setAuthStatus(prev => ({
         ...prev,
@@ -261,190 +195,168 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   };
 
-  const setupComposioConnection = async (userEmail: string) => {
-    // Double-check email validity before proceeding
-    if (!isValidRealEmail(userEmail)) {
-      console.warn('🚫 Refusing to setup Composio with invalid email:', userEmail);
-      setAuthStatus(prev => ({
-        ...prev,
-        composioConnected: false,
-        composioSkipped: true,
-        isSettingUpComposio: false,
-      }));
-      return;
-    }
 
-    // Prevent concurrent setup calls (race condition protection)
-    if (isSettingUpComposioRef.current) {
-      console.log('⚠️ Composio setup already in progress, skipping duplicate call');
-      return;
-    }
 
-    console.log('🔗 Setting up Composio connection for validated email:', userEmail);
-    isSettingUpComposioRef.current = true; // Set immediately, synchronously
-    setAuthStatus(prev => ({ ...prev, isSettingUpComposio: true }));
-    setAuthError(null);
 
-    try {
-      // Test if connection already exists
-      const testResult = await composioService.testUserConnection(userEmail);
-      
-      if (testResult.success && testResult.testResult) {
-        console.log('✅ Composio connection already exists and is active');
-        isSettingUpComposioRef.current = false; // Reset ref
-        setAuthStatus(prev => ({
-          ...prev,
-          composioConnected: true,
-          isSettingUpComposio: false,
-        }));
-        return;
-      }
-
-      // Setup new connection
-      const result = await composioService.setupUserConnection(userEmail);
-      
-      if (result.success) {
-        if (result.redirectUrl) {
-          console.log('🔗 Composio connection requires additional authentication');
-          
-          // Open Composio auth in popup
-          const popup = window.open(
-            result.redirectUrl,
-            'composio-auth',
-            'width=600,height=700,scrollbars=yes,resizable=yes,status=yes,location=yes,toolbar=no,menubar=no'
-          );
-
-          if (!popup) {
-            throw new Error('Failed to open popup window. Please allow popups for this site.');
-          }
-
-          // Monitor popup
-          const monitorPopup = () => {
-            const checkInterval = setInterval(async () => {
-              try {
-                if (popup.closed) {
-                  clearInterval(checkInterval);
-                  console.log('🪟 Popup closed, verifying connection...');
-                  
-                  // Wait a moment then verify
-                  setTimeout(async () => {
-                    await verifyComposioConnection(userEmail);
-                  }, 2000);
-                }
-              } catch (error) {
-                // Ignore cross-origin errors
-              }
-            }, 1000);
-
-            // Timeout after 5 minutes
-            setTimeout(() => {
-              if (!popup.closed) {
-                popup.close();
-                clearInterval(checkInterval);
-                setAuthError('Authentication timeout. Please try again.');
-                isSettingUpComposioRef.current = false; // Reset ref on timeout
-                setAuthStatus(prev => ({ ...prev, isSettingUpComposio: false }));
-              }
-            }, 5 * 60 * 1000);
-          };
-
-          monitorPopup();
-        } else {
-          // Connection setup complete
-          console.log('✅ Composio connection setup complete');
-          isSettingUpComposioRef.current = false; // Reset ref
-          setAuthStatus(prev => ({
-            ...prev,
-            composioConnected: true,
-            isSettingUpComposio: false,
-          }));
-        }
-      } else {
-        throw new Error(result.error || 'Failed to setup Composio connection');
-      }
-    } catch (error) {
-      console.error('❌ Error setting up Composio connection:', error);
-      
-      // Reset ref on error
-      isSettingUpComposioRef.current = false;
-      
-      // For demo purposes, if Composio setup fails, we'll mark it as connected anyway
-      // This allows the user to proceed with the onboarding
-      console.log('⚠️ Composio setup failed, but allowing user to proceed for demo purposes');
-      setAuthStatus(prev => ({
-        ...prev,
-        composioConnected: true, // Mark as connected for demo
-        isSettingUpComposio: false,
-      }));
-      
-      // Don't set error for demo purposes
-      // setAuthError(error instanceof Error ? error.message : 'Failed to setup Composio connection');
-    }
-  };
-
-  const verifyComposioConnection = async (userEmail: string) => {
-    // Only verify if we have a valid email
-    if (!isValidRealEmail(userEmail)) {
-      console.warn('🚫 Skipping Composio verification - invalid email:', userEmail);
-      return;
-    }
-
-    try {
-      console.log('🔍 Verifying Composio connection for:', userEmail);
-      const testResult = await composioService.testUserConnection(userEmail);
-      
-      if (testResult.success && testResult.testResult) {
-        console.log('✅ Composio connection verified successfully');
-        isSettingUpComposioRef.current = false; // Reset ref
-        setAuthStatus(prev => ({
-          ...prev,
-          composioConnected: true,
-          isSettingUpComposio: false,
-        }));
-        setAuthError(null);
-      } else {
-        console.warn('❌ Composio connection verification failed, but allowing to proceed');
-        // For demo purposes, mark as connected even if verification fails
-        isSettingUpComposioRef.current = false; // Reset ref
-        setAuthStatus(prev => ({
-          ...prev,
-          composioConnected: true,
-          isSettingUpComposio: false,
-        }));
-      }
-    } catch (error) {
-      console.error('❌ Error verifying Composio connection, but allowing to proceed:', error);
-      // For demo purposes, mark as connected even if verification fails
-      isSettingUpComposioRef.current = false; // Reset ref
-      setAuthStatus(prev => ({
-        ...prev,
-        composioConnected: true,
-        isSettingUpComposio: false,
-      }));
-    }
-  };
 
   const handleStartAuthentication = async () => {
     setIsAuthenticating(true);
     setAuthError(null);
+    setAuthStep('idle');
     
     try {
-      const authUrl = await googleCalendarService.getAuthUrl();
-      console.log('🔗 Redirecting to Google OAuth...');
-      window.location.href = authUrl;
+      const userEmail = authStatus.userEmail;
+      if (!userEmail || !isValidRealEmail(userEmail)) {
+        throw new Error('Please provide a valid email address first');
+      }
+      
+      console.log(`🔗 Starting Composio OAuth flow for: ${userEmail}`);
+      
+      // Store email for retrieval after OAuth callback
+      localStorage.setItem('onboarding_user_email', userEmail);
+      
+      // Use Composio OAuth flow - this will handle Google authentication internally
+      const result = await composioService.setupUserConnectionWithOAuth(userEmail);
+      
+      if (result.success && result.redirectUrl) {
+        console.log('🔗 Opening Composio OAuth in popup...');
+        setAuthStep('popup');
+        
+        // Open Composio auth in popup
+        const popup = window.open(
+          result.redirectUrl,
+          'composio-auth',
+          'width=600,height=700,scrollbars=yes,resizable=yes,status=yes,location=yes,toolbar=no,menubar=no'
+        );
+
+        if (!popup) {
+          throw new Error('Failed to open popup window. Please allow popups for this site.');
+        }
+
+        // Monitor popup and poll for connection status
+        const monitorPopup = () => {
+          const checkInterval = setInterval(async () => {
+            try {
+              if (popup.closed) {
+                clearInterval(checkInterval);
+                console.log('🪟 Popup closed, verifying connection...');
+                setAuthStep('polling');
+                
+                // Wait a moment then verify connection
+                setTimeout(async () => {
+                  await pollForConnection(userEmail);
+                }, 2000);
+              }
+            } catch {
+              // Ignore cross-origin errors
+            }
+          }, 1000);
+
+          // Timeout after 5 minutes
+          setTimeout(() => {
+            if (!popup.closed) {
+              popup.close();
+              clearInterval(checkInterval);
+              setAuthError('Authentication timeout. Please try again.');
+              setIsAuthenticating(false);
+              setAuthStep('idle');
+            }
+          }, 5 * 60 * 1000);
+        };
+
+        monitorPopup();
+      } else if (result.success && result.status === 'active') {
+        // Already connected
+        console.log('✅ Connection already active');
+        setAuthStatus(prev => ({
+          ...prev,
+          googleAuthenticated: true,
+          composioConnected: true,
+          isCheckingAuth: false,
+          hasValidEmail: true,
+        }));
+        setIsAuthenticating(false);
+        setAuthStep('idle');
+      } else {
+        throw new Error(result.error || 'Failed to initiate Composio OAuth');
+      }
     } catch (error) {
-      console.error('❌ Error initiating authentication:', error);
-      setAuthError('Failed to initiate authentication');
+      console.error('❌ Error initiating Composio OAuth:', error);
+      setAuthError(error instanceof Error ? error.message : 'Failed to initiate authentication');
       setIsAuthenticating(false);
+      setAuthStep('idle');
     }
+  };
+
+  const pollForConnection = async (userEmail: string) => {
+    console.log('🔍 Polling for connection status...');
+    let attempts = 0;
+    const maxAttempts = 30; // Poll for up to 30 seconds
+    
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        const testResult = await composioService.testUserConnection(userEmail);
+        
+        if (testResult.success && testResult.testResult) {
+          // Connection is active
+          clearInterval(pollInterval);
+          console.log('✅ Composio OAuth completed successfully');
+          
+          const userName = userEmail.split('@')[0]
+            .replace(/[._]/g, ' ')
+            .replace(/\b\w/g, l => l.toUpperCase());
+          
+          setAuthStatus(prev => ({
+            ...prev,
+            googleAuthenticated: true,
+            composioConnected: true,
+            userEmail,
+            userName,
+            isCheckingAuth: false,
+            hasValidEmail: true,
+          }));
+
+          updateData('email', userEmail);
+          updateData('name', userName);
+          
+          // Clean up stored email
+          localStorage.removeItem('onboarding_user_email');
+          setIsAuthenticating(false);
+          setAuthStep('idle');
+          setAuthError(null);
+          return;
+        }
+        
+        if (attempts >= maxAttempts) {
+          // Timeout - stop polling
+          clearInterval(pollInterval);
+          console.warn('⚠️ Connection polling timeout');
+          setAuthError('Connection setup is taking longer than expected. Please check your Composio dashboard or try again.');
+          setIsAuthenticating(false);
+          setAuthStep('idle');
+        }
+      } catch (error) {
+        console.warn(`⚠️ Polling attempt ${attempts} failed:`, error);
+        
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setAuthError('Failed to verify connection. Please try again.');
+          setIsAuthenticating(false);
+          setAuthStep('idle');
+        }
+      }
+    }, 1000); // Poll every second
   };
 
   const handleRetryAuth = () => {
     setAuthError(null);
+    setAuthStep('idle');
     checkAuthenticationStatus();
   };
 
-  const updateData = (field: keyof OnboardingData, value: any) => {
+  const updateData = (field: keyof OnboardingData, value: string | string[]) => {
     setData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -473,9 +385,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        // Allow proceeding if Google is authenticated, regardless of Composio status
-        // This allows users to continue even if Composio setup fails or is skipped
-        return authStatus.googleAuthenticated && !authStatus.isCheckingAuth;
+        // Allow proceeding if Composio authentication is complete
+        return authStatus.composioConnected && !authStatus.isCheckingAuth;
       case 2:
         return data.name.trim().length > 0;
       case 3:
@@ -505,10 +416,10 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return (
           <div className="space-y-8">
             <h2 className="text-3xl font-bold text-gray-900 text-center">
-              Connect Your Calendar & AI
+              Set Up Your Smart Calendar
             </h2>
             <p className="text-gray-600 text-center max-w-md mx-auto">
-              One simple authentication connects your Google Calendar and sets up AI-powered calendar management.
+              Let's customize your calendar experience. You can connect to AI features later when you're ready.
             </p>
             
             <div className="max-w-md mx-auto space-y-6">
@@ -531,7 +442,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 </div>
               )}
 
-              {/* Single Authentication Flow */}
+              {/* Email Input and Authentication Flow */}
               {!authStatus.isCheckingAuth && !authStatus.googleAuthenticated && (
                 <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
                   <div className="text-center space-y-4">
@@ -543,135 +454,114 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                         Connect Google Calendar + AI
                       </h3>
                       <p className="text-sm text-gray-600 mb-4">
-                        This single authentication will:
+                        Enter your email and authenticate via Composio:
                       </p>
-                      <ul className="text-sm text-gray-600 text-left space-y-1">
+                      <ul className="text-sm text-gray-600 text-left space-y-1 mb-4">
                         <li>• Connect your Google Calendar</li>
                         <li>• Set up AI calendar management</li>
                         <li>• Enable natural language commands</li>
                         <li>• Create your personal AI assistant</li>
                       </ul>
                     </div>
-                    <button
-                      onClick={handleStartAuthentication}
-                      disabled={isAuthenticating}
-                      className={`w-full flex items-center justify-center space-x-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ${
-                        isAuthenticating ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      {isAuthenticating ? (
-                        <>
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                          <span>Connecting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="h-5 w-5" />
-                          <span>Connect with Google</span>
-                        </>
+                    
+                    {/* Email Input */}
+                    <div className="space-y-3">
+                      <input
+                        type="email"
+                        value={authStatus.userEmail || ''}
+                        onChange={(e) => {
+                          const email = e.target.value;
+                          setAuthStatus(prev => ({ ...prev, userEmail: email }));
+                          updateData('email', email);
+                          // Extract name from email for convenience
+                          if (email && email.includes('@')) {
+                            const name = email.split('@')[0]
+                              .replace(/[._]/g, ' ')
+                              .replace(/\b\w/g, l => l.toUpperCase());
+                            setAuthStatus(prev => ({ ...prev, userName: name }));
+                            updateData('name', name);
+                          }
+                        }}
+                        placeholder="Enter your email address"
+                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors"
+                        autoFocus
+                      />
+                      
+                      <button
+                        onClick={handleStartAuthentication}
+                        disabled={isAuthenticating || !authStatus.userEmail || !isValidRealEmail(authStatus.userEmail)}
+                        className={`w-full flex items-center justify-center space-x-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ${
+                          (isAuthenticating || !authStatus.userEmail || !isValidRealEmail(authStatus.userEmail)) 
+                            ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        {isAuthenticating ? (
+                          <>
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span>
+                              {authStep === 'popup' ? 'Opening authentication...' :
+                               authStep === 'polling' ? 'Verifying connection...' :
+                               'Connecting via Composio...'}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="h-5 w-5" />
+                            <span>Connect Calendar & AI</span>
+                          </>
+                        )}
+                      </button>
+                      
+                      {/* Authentication Step Indicator */}
+                      {isAuthenticating && (
+                        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                          <div className="flex items-center space-x-2 text-sm text-blue-700">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>
+                              {authStep === 'popup' ? 'Complete authentication in the popup window' :
+                               authStep === 'polling' ? 'Checking connection status...' :
+                               'Preparing authentication...'}
+                            </span>
+                          </div>
+                        </div>
                       )}
-                    </button>
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* Authentication Success States */}
-              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && (
+              {/* Authentication Success State */}
+              {!authStatus.isCheckingAuth && authStatus.composioConnected && (
                 <div className="space-y-4">
-                  {/* Google Authentication Success */}
-                  <div className={`p-4 border-2 rounded-xl ${
-                    authStatus.hasValidEmail 
-                      ? 'border-green-200 bg-green-50' 
-                      : 'border-yellow-200 bg-yellow-50'
-                  }`}>
+                  {/* Composio Authentication Success */}
+                  <div className="p-4 border-2 border-green-200 bg-green-50 rounded-xl">
                     <div className="flex items-center space-x-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        authStatus.hasValidEmail ? 'bg-green-500' : 'bg-yellow-500'
-                      }`}>
-                        {authStatus.hasValidEmail ? (
-                          <Check className="h-6 w-6 text-white" />
-                        ) : (
-                          <AlertCircle className="h-6 w-6 text-white" />
-                        )}
+                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+                        <Check className="h-6 w-6 text-white" />
                       </div>
                       <div className="flex-1">
-                        <p className={`font-medium ${
-                          authStatus.hasValidEmail ? 'text-green-900' : 'text-yellow-900'
-                        }`}>
-                          Google Calendar Connected
+                        <p className="font-medium text-green-900">
+                          Calendar & AI Connected
                         </p>
-                        <p className={`text-sm ${
-                          authStatus.hasValidEmail ? 'text-green-700' : 'text-yellow-700'
-                        }`}>
-                          {authStatus.hasValidEmail 
-                            ? `Connected as ${authStatus.userEmail}`
-                            : 'Connected but email verification needed'
-                          }
+                        <p className="text-sm text-green-700">
+                          Connected as {authStatus.userEmail} via Composio
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Composio Setup Status */}
-                  {authStatus.hasValidEmail ? (
-                    <div className={`p-4 border-2 rounded-xl ${
-                      authStatus.composioConnected 
-                        ? 'border-green-200 bg-green-50' 
-                        : authStatus.isSettingUpComposio
-                          ? 'border-blue-200 bg-blue-50'
-                          : 'border-yellow-200 bg-yellow-50'
-                    }`}>
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                          authStatus.composioConnected 
-                            ? 'bg-green-500' 
-                            : authStatus.isSettingUpComposio
-                              ? 'bg-blue-500'
-                              : 'bg-yellow-500'
-                        }`}>
-                          {authStatus.composioConnected ? (
-                            <Check className="h-6 w-6 text-white" />
-                          ) : authStatus.isSettingUpComposio ? (
-                            <Loader2 className="h-6 w-6 text-white animate-spin" />
-                          ) : (
-                            <Brain className="h-6 w-6 text-white" />
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">
-                            {authStatus.composioConnected 
-                              ? 'AI Calendar Management Ready' 
-                              : authStatus.isSettingUpComposio
-                                ? 'Setting up AI Integration...'
-                                : 'AI Integration Pending'
-                            }
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {authStatus.composioConnected 
-                              ? 'Composio + OpenAI integration active'
-                              : authStatus.isSettingUpComposio
-                                ? 'Configuring your personal AI assistant...'
-                                : 'Complete authentication in popup window'
-                            }
-                          </p>
-                        </div>
+                  {/* Success Instructions */}
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                    <div className="flex items-center space-x-3">
+                      <Check className="h-5 w-5 text-green-600" />
+                      <div>
+                        <p className="font-medium text-green-900">Ready to Continue!</p>
+                        <p className="text-sm text-green-700">
+                          Your calendar is connected and AI management is ready.
+                        </p>
                       </div>
                     </div>
-                  ) : authStatus.composioSkipped ? (
-                    <div className="p-4 border-2 border-orange-200 bg-orange-50 rounded-xl">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
-                          <AlertCircle className="h-6 w-6 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-medium text-orange-900">AI Integration Skipped</p>
-                          <p className="text-sm text-orange-700">
-                            Advanced AI features require email verification. Basic calendar features are still available.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
+                  </div>
                 </div>
               )}
 
@@ -689,24 +579,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                       >
                         Retry Authentication Check
                       </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Success State */}
-              {!authStatus.isCheckingAuth && authStatus.googleAuthenticated && (authStatus.composioConnected || authStatus.composioSkipped) && (
-                <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                  <div className="flex items-center space-x-3">
-                    <Check className="h-5 w-5 text-green-600" />
-                    <div>
-                      <p className="font-medium text-green-900">Ready to Continue!</p>
-                      <p className="text-sm text-green-700">
-                        {authStatus.composioConnected 
-                          ? 'Your calendar is connected and AI management is ready.'
-                          : 'Your calendar is connected. You can proceed with basic features.'
-                        }
-                      </p>
                     </div>
                   </div>
                 </div>
