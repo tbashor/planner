@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Users, Repeat, Save, Trash2, Edit3, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 import { Event, EventCategory } from '../../types';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { format, parse, addDays, startOfDay } from 'date-fns';
 import { eventCategories } from '../../data/mockData';
+import composioService from '../../services/composioService';
 
 interface EventDialogProps {
   isOpen: boolean;
@@ -12,6 +14,7 @@ interface EventDialogProps {
   initialDate?: string;
   initialTime?: string;
   mode: 'create' | 'edit' | 'view';
+  onEventCreate?: (event: Event) => Promise<void>;
 }
 
 interface RecurrenceOptions {
@@ -21,8 +24,9 @@ interface RecurrenceOptions {
   count?: number;
 }
 
-export default function EventDialog({ isOpen, onClose, event, initialDate, initialTime, mode }: EventDialogProps) {
+export default function EventDialog({ isOpen, onClose, event, initialDate, initialTime, mode, onEventCreate }: EventDialogProps) {
   const { state, dispatch } = useApp();
+  const { authState } = useAuth();
   const [currentMode, setCurrentMode] = useState(mode);
   const [formData, setFormData] = useState({
     title: '',
@@ -45,6 +49,10 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
   const [showRecurringOptions, setShowRecurringOptions] = useState(false);
   const [editRecurringChoice, setEditRecurringChoice] = useState<'single' | 'all' | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Check if user is authenticated for Google Calendar sync
+  const isAuthenticated = authState.isAuthenticated && authState.connectionStatus === 'connected';
+  const userEmail = authState.userEmail;
 
   // Initialize form data
   useEffect(() => {
@@ -214,30 +222,78 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
       };
 
       if (currentMode === 'create') {
-        if (formData.isRecurring) {
-          // Create recurring events
-          const recurringEvents = generateRecurringEvents(eventData, formData.date);
-          recurringEvents.forEach(recurringEvent => {
-            dispatch({ type: 'ADD_EVENT', payload: recurringEvent });
-          });
-          setConfirmationMessage(`Perfect! "${eventData.title}" has been added as a daily recurring event. It will appear every day going forward.`);
+        if (onEventCreate) {
+          // Use the custom create handler that handles Google Calendar sync
+          await onEventCreate(eventData);
         } else {
-          // Create single event
-          dispatch({ type: 'ADD_EVENT', payload: eventData });
-          setConfirmationMessage(`Perfect! "${eventData.title}" has been added to your calendar for ${format(new Date(eventData.date), 'EEEE, MMMM d')}.`);
+          // Fallback to local creation
+          if (formData.isRecurring) {
+            // Create recurring events
+            const recurringEvents = generateRecurringEvents(eventData, formData.date);
+            recurringEvents.forEach(recurringEvent => {
+              dispatch({ type: 'ADD_EVENT', payload: recurringEvent });
+            });
+            setConfirmationMessage(`Perfect! "${eventData.title}" has been added as a daily recurring event. It will appear every day going forward.`);
+          } else {
+            // Create single event
+            dispatch({ type: 'ADD_EVENT', payload: eventData });
+            setConfirmationMessage(`Perfect! "${eventData.title}" has been added to your calendar for ${format(new Date(eventData.date), 'EEEE, MMMM d')}.`);
+          }
         }
       } else {
         // Update event
-        if (editRecurringChoice === 'all' && event?.isRecurring) {
-          // Update all recurring events
-          dispatch({ type: 'UPDATE_EVENT', payload: eventData });
-          updateRecurringEvents(eventData);
-          setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes.`);
+        if (isAuthenticated && userEmail) {
+          // Use Composio service for authenticated users
+          try {
+            const response = await composioService.updateCalendarEvent(userEmail, eventData.id, {
+              title: eventData.title,
+              description: eventData.description,
+              startTime: `${eventData.date}T${eventData.startTime}:00`,
+              endTime: `${eventData.date}T${eventData.endTime}:00`,
+            });
+
+            if (response.success) {
+              console.log('✅ Event updated successfully via Composio');
+              
+              if (editRecurringChoice === 'all' && event?.isRecurring) {
+                // Update all recurring events
+                dispatch({ type: 'UPDATE_EVENT', payload: eventData });
+                updateRecurringEvents(eventData);
+                setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes in both local and Google Calendar.`);
+              } else {
+                // Update single event
+                const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
+                dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
+                setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes in both local and Google Calendar.`);
+              }
+            } else {
+              throw new Error(response.error || 'Failed to update event in Google Calendar');
+            }
+          } catch (error) {
+            console.error('❌ Error updating event via Composio:', error);
+            
+            // Still update locally as fallback
+            if (editRecurringChoice === 'all' && event?.isRecurring) {
+              dispatch({ type: 'UPDATE_EVENT', payload: eventData });
+              updateRecurringEvents(eventData);
+              setConfirmationMessage(`Updated "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            } else {
+              const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
+              dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
+              setConfirmationMessage(`Updated "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          }
         } else {
-          // Update single event
-          const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
-          dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
-          setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes.`);
+          // Handle local events for non-authenticated users
+          if (editRecurringChoice === 'all' && event?.isRecurring) {
+            dispatch({ type: 'UPDATE_EVENT', payload: eventData });
+            updateRecurringEvents(eventData);
+            setConfirmationMessage(`Great! I've updated all instances of "${eventData.title}" with your changes locally.`);
+          } else {
+            const singleEventData = { ...eventData, isRecurring: false, recurringId: undefined };
+            dispatch({ type: 'UPDATE_EVENT', payload: singleEventData });
+            setConfirmationMessage(`Great! I've updated this instance of "${eventData.title}" with your changes locally.`);
+          }
         }
       }
 
@@ -248,8 +304,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
           id: Date.now().toString(),
           type: 'ai',
           content: currentMode === 'create' 
-            ? `📅 Excellent! I've added "${eventData.title}" to your schedule. ${formData.isRecurring ? 'Since this is a recurring event, it will automatically appear every day. ' : ''}${formData.location ? `I see it's at ${formData.location} - ` : ''}Would you like me to suggest the best preparation time or set a reminder?`
-            : `✅ Perfect! "${eventData.title}" has been updated successfully. Your schedule is looking great!`,
+            ? `📅 Excellent! I've added "${eventData.title}" to your schedule${isAuthenticated ? ' and synced it with Google Calendar' : ''}. ${formData.isRecurring ? 'Since this is a recurring event, it will automatically appear every day. ' : ''}${formData.location ? `I see it's at ${formData.location} - ` : ''}Would you like me to suggest the best preparation time or set a reminder?`
+            : `✅ Perfect! "${eventData.title}" has been updated successfully${isAuthenticated ? ' and synced with Google Calendar' : ''}. Your schedule is looking great!`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -268,63 +324,142 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!event) return;
 
-    if (event.isRecurring) {
-      const choice = window.confirm(
-        `This is a recurring event. Would you like to delete:\n\n` +
-        `• Click "OK" to delete ALL instances of "${event.title}"\n` +
-        `• Click "Cancel" to delete only this instance`
-      );
-
-      if (choice) {
-        // Delete all recurring events
-        const recurringEvents = state.events.filter(e => e.recurringId === event.recurringId);
-        recurringEvents.forEach(recurringEvent => {
-          dispatch({ type: 'DELETE_EVENT', payload: recurringEvent.id });
-        });
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        const response = await composioService.deleteCalendarEvent(userEmail, event.id);
         
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `🗑️ I've removed all instances of the recurring event "${event.title}" from your calendar.`,
-            timestamp: new Date().toISOString(),
-          },
-        });
+        if (response.success) {
+          console.log('✅ Event deleted successfully via Composio');
+          
+          if (event.isRecurring) {
+            const choice = window.confirm(
+              `This is a recurring event. Would you like to delete:\n\n` +
+              `• Click "OK" to delete ALL instances of "${event.title}"\n` +
+              `• Click "Cancel" to delete only this instance`
+            );
+
+            if (choice) {
+              // Delete all recurring events
+              const recurringEvents = state.events.filter(e => e.recurringId === event.recurringId);
+              recurringEvents.forEach(recurringEvent => {
+                dispatch({ type: 'DELETE_EVENT', payload: recurringEvent.id });
+              });
+              
+              dispatch({
+                type: 'ADD_CHAT_MESSAGE',
+                payload: {
+                  id: Date.now().toString(),
+                  type: 'ai',
+                  content: `🗑️ I've removed all instances of the recurring event "${event.title}" from both your local calendar and Google Calendar.`,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            } else {
+              // Delete only this instance
+              dispatch({ type: 'DELETE_EVENT', payload: event.id });
+              
+              dispatch({
+                type: 'ADD_CHAT_MESSAGE',
+                payload: {
+                  id: Date.now().toString(),
+                  type: 'ai',
+                  content: `🗑️ I've removed this instance of "${event.title}" from both your local calendar and Google Calendar. Other recurring instances remain.`,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+          } else {
+            // Delete single event
+            dispatch({ type: 'DELETE_EVENT', payload: event.id });
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: Date.now().toString(),
+                type: 'ai',
+                content: `🗑️ I've removed "${event.title}" from both your local calendar and Google Calendar.`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          throw new Error(response.error || 'Failed to delete event from Google Calendar');
+        }
       } else {
-        // Delete only this instance
-        dispatch({ type: 'DELETE_EVENT', payload: event.id });
-        
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `🗑️ I've removed this instance of "${event.title}" from your calendar. Other recurring instances remain.`,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      }
-    } else {
-      const confirmDelete = window.confirm(
-        `Are you sure you want to delete "${event.title}"? This action cannot be undone.`
-      );
+        // Handle local events for non-authenticated users
+        if (event.isRecurring) {
+          const choice = window.confirm(
+            `This is a recurring event. Would you like to delete:\n\n` +
+            `• Click "OK" to delete ALL instances of "${event.title}"\n` +
+            `• Click "Cancel" to delete only this instance`
+          );
 
-      if (confirmDelete) {
-        dispatch({ type: 'DELETE_EVENT', payload: event.id });
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `🗑️ I've removed "${event.title}" from your calendar. Would you like me to suggest alternative activities for that time slot?`,
-            timestamp: new Date().toISOString(),
-          },
-        });
+          if (choice) {
+            // Delete all recurring events
+            const recurringEvents = state.events.filter(e => e.recurringId === event.recurringId);
+            recurringEvents.forEach(recurringEvent => {
+              dispatch({ type: 'DELETE_EVENT', payload: recurringEvent.id });
+            });
+            
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: Date.now().toString(),
+                type: 'ai',
+                content: `🗑️ I've removed all instances of the recurring event "${event.title}" from your local calendar.`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          } else {
+            // Delete only this instance
+            dispatch({ type: 'DELETE_EVENT', payload: event.id });
+            
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: Date.now().toString(),
+                type: 'ai',
+                content: `🗑️ I've removed this instance of "${event.title}" from your local calendar. Other recurring instances remain.`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          const confirmDelete = window.confirm(
+            `Are you sure you want to delete "${event.title}"? This action cannot be undone.`
+          );
+
+          if (confirmDelete) {
+            dispatch({ type: 'DELETE_EVENT', payload: event.id });
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: Date.now().toString(),
+                type: 'ai',
+                content: `🗑️ I've removed "${event.title}" from your local calendar. Connect Google Calendar to sync deletions across devices.`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        }
       }
+    } catch (error) {
+      console.error('❌ Error deleting event:', error);
+      
+      // Still delete locally as fallback
+      dispatch({ type: 'DELETE_EVENT', payload: event.id });
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `🗑️ I've removed "${event.title}" locally, but couldn't sync the deletion to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        },
+      });
     }
     
     onClose();
@@ -518,6 +653,9 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                 }`}>
                   {currentMode === 'create' ? 'Tell me about your new event' : 
                    currentMode === 'edit' ? 'Make any changes you need' : 'View event information'}
+                  {isAuthenticated && (
+                    <span className="ml-2 text-green-600">• Syncs with Google Calendar</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -687,6 +825,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                     </div>
                     <p className="text-xs mt-1">
                       This event will appear every day at the same time. Recurring events are displayed in grey to distinguish them from one-time events.
+                      {isAuthenticated && ' Changes will sync to Google Calendar.'}
                     </p>
                   </div>
                 )}

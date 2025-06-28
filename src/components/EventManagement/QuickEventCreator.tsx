@@ -1,21 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Calendar, Clock, Zap, X } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { format, parse, addHours } from 'date-fns';
 import { eventCategories } from '../../data/mockData';
+import composioService from '../../services/composioService';
 
 interface QuickEventCreatorProps {
   isOpen: boolean;
   onClose: () => void;
   initialDate?: string;
   initialTime?: string;
+  onEventCreate?: (event: any) => Promise<void>;
 }
 
-export default function QuickEventCreator({ isOpen, onClose, initialDate, initialTime }: QuickEventCreatorProps) {
+export default function QuickEventCreator({ isOpen, onClose, initialDate, initialTime, onEventCreate }: QuickEventCreatorProps) {
   const { state, dispatch } = useApp();
+  const { authState } = useAuth();
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Check if user is authenticated for Google Calendar sync
+  const isAuthenticated = authState.isAuthenticated && authState.connectionStatus === 'connected';
+  const userEmail = authState.userEmail;
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -122,18 +130,71 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
         color: eventCategories[0].color,
       };
 
-      dispatch({ type: 'ADD_EVENT', payload: newEvent });
+      if (onEventCreate) {
+        // Use the custom create handler that handles Google Calendar sync
+        await onEventCreate(newEvent);
+      } else {
+        // Fallback to local creation
+        if (isAuthenticated && userEmail) {
+          // Use Composio service for authenticated users
+          try {
+            const response = await composioService.createCalendarEvent(userEmail, {
+              title: newEvent.title,
+              description: newEvent.description,
+              startTime: `${newEvent.date}T${newEvent.startTime}:00`,
+              endTime: `${newEvent.date}T${newEvent.endTime}:00`,
+            });
 
-      // Add AI feedback
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `🎯 Perfect! I've created "${newEvent.title}" for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime}. The event looks great! Would you like me to suggest any preparation time or set a reminder?`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+            if (response.success) {
+              console.log('✅ Quick event created successfully via Composio');
+              
+              // Add to local state
+              dispatch({ type: 'ADD_EVENT', payload: newEvent });
+              
+              // Add AI feedback
+              dispatch({
+                type: 'ADD_CHAT_MESSAGE',
+                payload: {
+                  id: Date.now().toString(),
+                  type: 'ai',
+                  content: `🎯 Perfect! I've created "${newEvent.title}" for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime} and synced it with your Google Calendar. The event looks great!`,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            } else {
+              throw new Error(response.error || 'Failed to create event in Google Calendar');
+            }
+          } catch (error) {
+            console.error('❌ Error creating quick event via Composio:', error);
+            
+            // Still add to local state as fallback
+            dispatch({ type: 'ADD_EVENT', payload: newEvent });
+            
+            dispatch({
+              type: 'ADD_CHAT_MESSAGE',
+              payload: {
+                id: Date.now().toString(),
+                type: 'ai',
+                content: `🎯 I've created "${newEvent.title}" locally for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime}, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          // Handle local events for non-authenticated users
+          dispatch({ type: 'ADD_EVENT', payload: newEvent });
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `🎯 Perfect! I've created "${newEvent.title}" for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime} in your local calendar. Connect Google Calendar to sync events across devices.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      }
 
       setInput('');
       onClose();
@@ -183,6 +244,9 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
                   state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   Just tell me what you want to schedule
+                  {isAuthenticated && (
+                    <span className="ml-2 text-green-600">• Syncs with Google Calendar</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -241,6 +305,9 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
                 <div className="flex items-center space-x-2 text-xs text-gray-500">
                   <Clock className="h-3 w-3" />
                   <span>I'll figure out the details from your description</span>
+                  {isAuthenticated && (
+                    <span className="text-green-600">• Auto-sync to Google Calendar</span>
+                  )}
                 </div>
                 <div className="flex items-center space-x-2">
                   <button

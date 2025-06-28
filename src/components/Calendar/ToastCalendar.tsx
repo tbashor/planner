@@ -12,6 +12,7 @@ import EventContextMenu from '../EventManagement/EventContextMenu';
 import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { mockEvents } from '../../data/mockData';
+import composioService from '../../services/composioService';
 
 interface ToastCalendarEvent {
   id: string;
@@ -257,46 +258,68 @@ export default function ToastCalendar() {
     const { event, changes } = updateData;
     const updatedEvent = convertFromToastEvent({ ...event, ...changes });
     
-    if (event.id.startsWith('google_')) {
-      // Use hybrid hook for Google Calendar events
-      try {
-        await updateCalendarEvent(updatedEvent);
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        console.log('🔄 Updating event via Composio:', updatedEvent.title);
         
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `✅ Perfect! I've updated "${updatedEvent.title}" both locally and in your Google Calendar. The changes are synced across all your devices.`,
-            timestamp: new Date().toISOString(),
-          },
+        const response = await composioService.updateCalendarEvent(userEmail, updatedEvent.id, {
+          title: updatedEvent.title,
+          description: updatedEvent.description,
+          startTime: `${updatedEvent.date}T${updatedEvent.startTime}:00`,
+          endTime: `${updatedEvent.date}T${updatedEvent.endTime}:00`,
         });
-      } catch (error) {
-        console.error('Error updating Google Calendar event:', error);
+
+        if (response.success) {
+          console.log('✅ Event updated successfully via Composio');
+          
+          // Update local state
+          const updatedEvents = state.events.map(e => 
+            e.id === updatedEvent.id ? updatedEvent : e
+          );
+          setEventsHistory(updatedEvents);
+          
+          // Refresh calendar data
+          await fetchCurrentWeek();
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `✅ Perfect! I've updated "${updatedEvent.title}" in both your local calendar and Google Calendar. The changes are synced across all your devices.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } else {
+          throw new Error(response.error || 'Failed to update event');
+        }
+      } else {
+        // Handle local events for non-authenticated users
+        const updatedEvents = state.events.map(e => 
+          e.id === updatedEvent.id ? updatedEvent : e
+        );
+        setEventsHistory(updatedEvents);
         
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: Date.now().toString(),
             type: 'ai',
-            content: `❌ I couldn't update "${updatedEvent.title}" in Google Calendar. Please try again.`,
+            content: `✅ I've updated "${updatedEvent.title}" in your local calendar. Connect your Google Calendar to sync changes across devices.`,
             timestamp: new Date().toISOString(),
           },
         });
       }
-    } else {
-      // Handle local events
-      const updatedEvents = state.events.map(e => 
-        e.id === updatedEvent.id ? updatedEvent : e
-      );
-      setEventsHistory(updatedEvents);
+    } catch (error) {
+      console.error('❌ Error updating event:', error);
       
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: Date.now().toString(),
           type: 'ai',
-          content: `✅ I've updated "${updatedEvent.title}" in your schedule. The new timing looks good for your productivity!`,
+          content: `❌ I couldn't update "${updatedEvent.title}" in Google Calendar. The change was saved locally. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -304,44 +327,59 @@ export default function ToastCalendar() {
   };
 
   const onBeforeDeleteEvent = async (eventData: any) => {
-    if (eventData.id.startsWith('google_')) {
-      // Use hybrid hook for Google Calendar events
-      try {
-        await deleteCalendarEvent(eventData.id);
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        console.log('🗑️ Deleting event via Composio:', eventData.title);
+        
+        const response = await composioService.deleteCalendarEvent(userEmail, eventData.id);
+        
+        if (response.success) {
+          console.log('✅ Event deleted successfully via Composio');
+          
+          // Update local state
+          const updatedEvents = state.events.filter(e => e.id !== eventData.id);
+          setEventsHistory(updatedEvents);
+          
+          // Refresh calendar data
+          await fetchCurrentWeek();
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `🗑️ I've successfully deleted "${eventData.title}" from both your local schedule and Google Calendar.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } else {
+          throw new Error(response.error || 'Failed to delete event');
+        }
+      } else {
+        // Handle local events for non-authenticated users
+        const updatedEvents = state.events.filter(e => e.id !== eventData.id);
+        setEventsHistory(updatedEvents);
         
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: Date.now().toString(),
             type: 'ai',
-            content: `🗑️ I've successfully deleted "${eventData.title}" from both your local schedule and Google Calendar.`,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      } catch (error) {
-        console.error('Error deleting Google Calendar event:', error);
-        
-        dispatch({
-          type: 'ADD_CHAT_MESSAGE',
-          payload: {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `❌ I couldn't delete "${eventData.title}" from Google Calendar. Please try again.`,
+            content: `🗑️ I've removed "${eventData.title}" from your local calendar. Connect your Google Calendar to sync deletions across devices.`,
             timestamp: new Date().toISOString(),
           },
         });
       }
-    } else {
-      // Handle local events
-      const updatedEvents = state.events.filter(e => e.id !== eventData.id);
-      setEventsHistory(updatedEvents);
+    } catch (error) {
+      console.error('❌ Error deleting event:', error);
       
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: Date.now().toString(),
           type: 'ai',
-          content: `🗑️ I've removed "${eventData.title}" from your schedule. Would you like me to suggest alternative activities for that time slot?`,
+          content: `❌ I couldn't delete "${eventData.title}" from Google Calendar. The event was removed locally. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -419,6 +457,76 @@ export default function ToastCalendar() {
     }
 
     await fetchCurrentWeek();
+  };
+
+  // Enhanced event creation handler for dialog
+  const handleCreateEventFromDialog = async (eventData: Event) => {
+    try {
+      if (isAuthenticated && userEmail) {
+        // Use Composio service for authenticated users
+        console.log('📝 Creating event via Composio:', eventData.title);
+        
+        const response = await composioService.createCalendarEvent(userEmail, {
+          title: eventData.title,
+          description: eventData.description,
+          startTime: `${eventData.date}T${eventData.startTime}:00`,
+          endTime: `${eventData.date}T${eventData.endTime}:00`,
+        });
+
+        if (response.success) {
+          console.log('✅ Event created successfully via Composio');
+          
+          // Add to local state
+          const updatedEvents = [...state.events, eventData];
+          setEventsHistory(updatedEvents);
+          
+          // Refresh calendar data
+          await fetchCurrentWeek();
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `📅 Excellent! I've created "${eventData.title}" in both your local calendar and Google Calendar. It's now synced across all your devices.`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } else {
+          throw new Error(response.error || 'Failed to create event');
+        }
+      } else {
+        // Handle local events for non-authenticated users
+        const updatedEvents = [...state.events, eventData];
+        setEventsHistory(updatedEvents);
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `📅 I've created "${eventData.title}" in your local calendar. Connect your Google Calendar to sync events across devices.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      
+      // Still add to local state as fallback
+      const updatedEvents = [...state.events, eventData];
+      setEventsHistory(updatedEvents);
+      
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `📅 I've created "${eventData.title}" locally, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
   };
 
   // Keyboard shortcuts
@@ -510,7 +618,7 @@ export default function ToastCalendar() {
               <p className={`text-xs ${
                 state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                {isAuthenticated ? `Connected as ${userEmail}` : 'Local calendar'}
+                {isAuthenticated ? `Synced with ${userEmail}` : 'Local calendar only'}
               </p>
             </div>
           </div>
@@ -674,6 +782,7 @@ export default function ToastCalendar() {
         mode={eventDialog.mode}
         initialDate={eventDialog.initialDate}
         initialTime={eventDialog.initialTime}
+        onEventCreate={handleCreateEventFromDialog}
       />
 
       <QuickEventCreator
@@ -681,6 +790,7 @@ export default function ToastCalendar() {
         onClose={() => setQuickCreator({ isOpen: false })}
         initialDate={quickCreator.initialDate}
         initialTime={quickCreator.initialTime}
+        onEventCreate={handleCreateEventFromDialog}
       />
 
       {contextMenu.isOpen && contextMenu.event && (
