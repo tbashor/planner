@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle } from 'lucide-react';
+import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import composioService from '../../services/composioService';
@@ -33,6 +33,7 @@ export default function AiSidebar() {
   const [testResults, setTestResults] = useState<any>(null);
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
+  const [lastToolsUsed, setLastToolsUsed] = useState<number>(0);
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -98,7 +99,7 @@ export default function AiSidebar() {
 
       if (!available) {
         setIsComposioConnected(false);
-        setComposioConnectionError('Composio server is not available. Please start the server.');
+        setComposioConnectionError('AI agent server is not available. Please start the server.');
         return;
       }
 
@@ -106,12 +107,12 @@ export default function AiSidebar() {
       const userEmail = getAuthenticatedUserEmail();
       if (!userEmail) {
         setIsComposioConnected(false);
-        setComposioConnectionError('Advanced AI features require email verification. Basic calendar features are available.');
+        setComposioConnectionError('Advanced AI agent features require email verification. Basic calendar features are available.');
         setConnectionStatus('no_valid_email');
         return;
       }
 
-      console.log(`🔍 Checking Composio connection for validated user: ${userEmail}`);
+      console.log(`🔍 Checking AI agent connection for validated user: ${userEmail}`);
 
       // Test user's Composio connection
       const testResult = await composioService.testUserConnection(userEmail);
@@ -120,19 +121,19 @@ export default function AiSidebar() {
         setIsComposioConnected(true);
         setConnectionStatus(testResult.testResult.connectionStatus);
         setComposioConnectionError(null);
-        console.log(`✅ Composio connection active for ${userEmail}`);
+        console.log(`✅ AI agent connection active for ${userEmail}`);
       } else {
         setIsComposioConnected(false);
         setConnectionStatus('disconnected');
-        setComposioConnectionError(testResult.error || 'Composio connection not found');
-        console.warn(`❌ Composio connection failed for ${userEmail}`);
+        setComposioConnectionError(testResult.error || 'AI agent connection not found');
+        console.warn(`❌ AI agent connection failed for ${userEmail}`);
       }
     } catch (error) {
       setIsComposioConnected(false);
       setServerAvailable(false);
       setConnectionStatus('error');
-      setComposioConnectionError('Failed to check Composio connection');
-      console.error('❌ Error checking Composio connection:', error);
+      setComposioConnectionError('Failed to check AI agent connection');
+      console.error('❌ Error checking AI agent connection:', error);
     }
   };
 
@@ -149,7 +150,7 @@ export default function AiSidebar() {
         payload: {
           id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: 'Advanced AI features require email verification. Please ensure your Google account email is properly authenticated. Basic calendar features are still available.',
+          content: 'Advanced AI agent features require email verification. Please ensure your Google account email is properly authenticated. Basic calendar features are still available.',
           timestamp: new Date().toISOString(),
         },
       });
@@ -172,9 +173,9 @@ export default function AiSidebar() {
     setChatInput('');
 
     try {
-      console.log(`💬 Sending message to Composio AI for validated user: ${userEmail}`);
+      console.log(`🤖 Sending message to OpenAI agent for validated user: ${userEmail}`);
       
-      // Send message to Composio + OpenAI service
+      // Send message to OpenAI agent with Composio tools
       const response = await composioService.sendMessage(userMessage, userEmail, {
         events: state.events,
         preferences: state.user?.preferences,
@@ -182,6 +183,11 @@ export default function AiSidebar() {
       });
 
       if (response.success && response.response) {
+        // Track tools used by the agent
+        if (response.response.toolsUsed) {
+          setLastToolsUsed(response.response.toolsUsed);
+        }
+
         // Check if user needs to setup connection
         if (response.response.needsConnection) {
           if (response.response.redirectUrl) {
@@ -208,19 +214,26 @@ export default function AiSidebar() {
             });
           }
         } else {
-          // Normal AI response
+          // Normal AI agent response
+          let aiMessage = response.response.message;
+          
+          // Add tool usage info if tools were used
+          if (response.response.toolsUsed && response.response.toolsUsed > 0) {
+            aiMessage += `\n\n🔧 *I used ${response.response.toolsUsed} Google Calendar tool${response.response.toolsUsed > 1 ? 's' : ''} to help you with this request.*`;
+          }
+
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
               id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: response.response.message,
+              content: aiMessage,
               timestamp: new Date().toISOString(),
             },
           });
         }
       } else {
-        throw new Error(response.error || 'Failed to get AI response');
+        throw new Error(response.error || 'Failed to get AI agent response');
       }
 
       setIsProcessingMessage(false);
@@ -231,7 +244,7 @@ export default function AiSidebar() {
         payload: {
           id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: "I'm having trouble processing that request right now. Please check your connection and try again.",
+          content: "I'm having trouble processing that request right now. Please check your connection and try again. The AI agent might be temporarily unavailable.",
           timestamp: new Date().toISOString(),
         },
       });
@@ -267,7 +280,7 @@ export default function AiSidebar() {
   const handleTestConnection = async () => {
     const userEmail = getAuthenticatedUserEmail();
     if (!userEmail) {
-      setComposioConnectionError('Email verification required for AI features');
+      setComposioConnectionError('Email verification required for AI agent features');
       return;
     }
 
@@ -275,7 +288,7 @@ export default function AiSidebar() {
     setTestResults(null);
 
     try {
-      console.log(`🧪 Testing Composio connection for validated user: ${userEmail}`);
+      console.log(`🧪 Testing AI agent connection for validated user: ${userEmail}`);
       
       const result = await composioService.testUserConnection(userEmail);
       setTestResults(result);
@@ -290,27 +303,27 @@ export default function AiSidebar() {
           payload: {
             id: `test_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `🧪 Connection test successful for ${userEmail}! Your Composio integration is working perfectly. I have access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools for managing your calendar.`,
+            content: `🧪 AI agent connection test successful for ${userEmail}! Your OpenAI agent has access to ${result.testResult?.toolsAvailable || 0} Google Calendar tools and can intelligently decide which ones to use for your requests.`,
             timestamp: new Date().toISOString(),
           },
         });
       } else {
         setIsComposioConnected(false);
-        setComposioConnectionError(result.error || 'Connection test failed');
+        setComposioConnectionError(result.error || 'AI agent connection test failed');
         
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
             id: `test_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `❌ Connection test failed for ${userEmail}: ${result.error}. Your connections were set up during onboarding, so this might be a temporary issue.`,
+            content: `❌ AI agent connection test failed for ${userEmail}: ${result.error}. Your connections were set up during onboarding, so this might be a temporary issue.`,
             timestamp: new Date().toISOString(),
           },
         });
       }
     } catch (error) {
-      console.error('❌ Connection test error:', error);
-      setComposioConnectionError('Connection test failed');
+      console.error('❌ AI agent connection test error:', error);
+      setComposioConnectionError('AI agent connection test failed');
       setTestResults({ success: false, error: error.message });
     } finally {
       setIsTestingConnection(false);
@@ -332,13 +345,13 @@ export default function AiSidebar() {
       }`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-600 rounded-full flex items-center justify-center">
-              <MessageCircle className="h-4 w-4 text-white" />
+            <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-blue-600 rounded-full flex items-center justify-center">
+              <Brain className="h-4 w-4 text-white" />
             </div>
             <h2 className={`font-semibold ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              AI Calendar Assistant
+              AI Calendar Agent
             </h2>
           </div>
           <div className="flex items-center space-x-1">
@@ -348,7 +361,7 @@ export default function AiSidebar() {
                 <span className={`text-xs ${
                   state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  Connected
+                  Active
                 </span>
               </>
             ) : (
@@ -357,7 +370,7 @@ export default function AiSidebar() {
                 <span className={`text-xs ${
                   state.isDarkMode ? 'text-red-400' : 'text-red-600'
                 }`}>
-                  {hasValidEmail ? 'Disconnected' : 'Limited'}
+                  {hasValidEmail ? 'Offline' : 'Limited'}
                 </span>
               </>
             )}
@@ -372,19 +385,19 @@ export default function AiSidebar() {
             <div className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
               User: {state.user.email}
             </div>
-            <div>Status: {connectionStatus}</div>
+            <div>Agent Status: {connectionStatus}</div>
             <div className="flex items-center space-x-2 mt-1">
               <Calendar className="h-3 w-3" />
               <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
               {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
             </div>
             {hasValidEmail ? (
-              <div className="text-green-500 mt-1">✓ Email verified - Full AI features available</div>
+              <div className="text-green-500 mt-1">✓ Email verified - AI agent with full tools access</div>
             ) : (
-              <div className="text-orange-500 mt-1">⚠️ Email verification needed for AI features</div>
+              <div className="text-orange-500 mt-1">⚠️ Email verification needed for AI agent</div>
             )}
             {isComposioConnected && hasValidEmail && (
-              <div className="text-green-500 mt-1">✓ Composio + OpenAI integration active</div>
+              <div className="text-purple-500 mt-1">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
             )}
           </div>
         )}
@@ -435,18 +448,18 @@ export default function AiSidebar() {
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              <MessageCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Start a conversation with your AI calendar assistant</p>
+              <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Chat with your intelligent AI calendar agent</p>
               <p className="text-xs mt-1">
                 {hasValidEmail 
-                  ? 'Powered by Composio + OpenAI for direct Google Calendar management'
-                  : 'Email verification required for advanced AI features'
+                  ? 'Powered by OpenAI with Composio Google Calendar tools'
+                  : 'Email verification required for AI agent features'
                 }
               </p>
               {state.user?.email && (
                 <div className="text-xs mt-2 opacity-75">
                   <p>Connected as: {state.user.email}</p>
-                  <p>Status: {connectionStatus}</p>
+                  <p>Agent Status: {connectionStatus}</p>
                   {!hasValidEmail && (
                     <p className="text-orange-500 mt-1">⚠️ Limited features - email verification needed</p>
                   )}
@@ -487,11 +500,11 @@ export default function AiSidebar() {
               }`}>
                 <div className="flex items-center space-x-2">
                   <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">AI is processing your calendar request...</span>
+                  <span className="text-xs opacity-70">AI agent is analyzing your request and selecting tools...</span>
                 </div>
               </div>
             </div>
@@ -509,15 +522,15 @@ export default function AiSidebar() {
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={
                 !state.user?.email 
-                  ? "Complete onboarding to get your AI assistant..."
+                  ? "Complete onboarding to get your AI agent..."
                   : !serverAvailable
-                    ? "Server is offline..."
+                    ? "AI agent server is offline..."
                     : !hasValidEmail
-                      ? "Email verification needed for AI features..."
-                      : "Ask me to manage your Google Calendar..."
+                      ? "Email verification needed for AI agent..."
+                      : "Tell me what you need help with..."
               }
               disabled={isProcessingMessage || !state.user?.email || !serverAvailable}
-              className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${
                 state.isDarkMode
                   ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-400'
                   : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
@@ -542,7 +555,7 @@ export default function AiSidebar() {
             <button
               type="submit"
               disabled={!chatInput.trim() || isProcessingMessage || !state.user?.email || !serverAvailable}
-              className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+              className="p-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
             >
               <Send className="h-4 w-4" />
             </button>
@@ -553,31 +566,31 @@ export default function AiSidebar() {
             state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
           }`}>
             {!state.user?.email ? (
-              <p>🔐 Complete onboarding to get your AI assistant</p>
+              <p>🔐 Complete onboarding to get your AI agent</p>
             ) : !serverAvailable ? (
-              <p>🔌 Server is offline - please start the server</p>
+              <p>🔌 AI agent server is offline - please start the server</p>
             ) : !hasValidEmail ? (
-              <p>📧 Email verification needed for advanced AI features</p>
+              <p>📧 Email verification needed for AI agent features</p>
             ) : (
-              <p>💡 Try: "Schedule a meeting tomorrow at 2pm", "What's on my calendar?", "Create a workout session"</p>
+              <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* Connection Status */}
+      {/* AI Agent Status */}
       <div className={`border-t p-4 flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <Link className={`h-4 w-4 ${
-              state.isDarkMode ? 'text-green-400' : 'text-green-500'
+            <Zap className={`h-4 w-4 ${
+              state.isDarkMode ? 'text-purple-400' : 'text-purple-500'
             }`} />
             <h3 className={`text-sm font-medium ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              Connection Status
+              AI Agent Status
             </h3>
           </div>
           <button
@@ -608,7 +621,7 @@ export default function AiSidebar() {
                 }`}
               >
                 <TestTube className={`h-3 w-3 ${isTestingConnection ? 'animate-spin' : ''}`} />
-                <span>{isTestingConnection ? 'Testing...' : 'Test Connection'}</span>
+                <span>{isTestingConnection ? 'Testing...' : 'Test AI Agent'}</span>
               </button>
             )}
 
@@ -617,7 +630,7 @@ export default function AiSidebar() {
               <div className={`p-3 rounded-lg text-xs ${
                 state.isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-gray-100 border border-gray-300'
               }`}>
-                <div className="font-medium mb-2">Test Results:</div>
+                <div className="font-medium mb-2">AI Agent Test Results:</div>
                 <pre className={`text-xs overflow-auto max-h-32 ${
                   state.isDarkMode ? 'text-gray-300' : 'text-gray-700'
                 }`}>
@@ -628,29 +641,34 @@ export default function AiSidebar() {
           </div>
         )}
 
-        {/* Connection Status */}
+        {/* Agent Status */}
         <div className={`text-xs p-2 rounded-lg ${
           isComposioConnected && hasValidEmail
-            ? state.isDarkMode ? 'bg-green-900 bg-opacity-20 text-green-400' : 'bg-green-50 text-green-600'
+            ? state.isDarkMode ? 'bg-purple-900 bg-opacity-20 text-purple-400' : 'bg-purple-50 text-purple-600'
             : hasValidEmail
               ? state.isDarkMode ? 'bg-yellow-900 bg-opacity-20 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
               : state.isDarkMode ? 'bg-orange-900 bg-opacity-20 text-orange-400' : 'bg-orange-50 text-orange-600'
         }`}>
           <div className="flex items-center space-x-1 mb-1">
-            <Link className="h-3 w-3" />
+            <Brain className="h-3 w-3" />
             <span className="font-medium">
-              {isComposioConnected && hasValidEmail ? 'All Systems Connected' : 
-               hasValidEmail ? 'Connection Issue' : 'Email Verification Needed'}
+              {isComposioConnected && hasValidEmail ? 'AI Agent Active' : 
+               hasValidEmail ? 'Agent Connection Issue' : 'Email Verification Needed'}
             </span>
           </div>
           <p>
             {isComposioConnected && hasValidEmail
-              ? `Your Google Calendar (${displayUserEmail}) is connected via Composio. I can create, update, and manage events using AI commands.`
+              ? `Your OpenAI agent (${displayUserEmail}) has access to Google Calendar tools and can intelligently decide which ones to use for your requests.`
               : hasValidEmail
-                ? `Your connections were set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
-                : `Email verification is required for advanced AI calendar management. Basic Google Calendar features are available.`
+                ? `Your AI agent was set up during onboarding. If you're seeing this message, there might be a temporary server issue.`
+                : `Email verification is required for the AI agent with Google Calendar tools. Basic calendar features are available.`
             }
           </p>
+          {lastToolsUsed > 0 && isComposioConnected && hasValidEmail && (
+            <p className="mt-1 text-xs opacity-75">
+              🔧 Last interaction used {lastToolsUsed} calendar tool{lastToolsUsed > 1 ? 's' : ''}
+            </p>
+          )}
         </div>
       </div>
 

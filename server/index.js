@@ -101,7 +101,11 @@ async function getUserTools(userEmail) {
         'GOOGLECALENDAR_LIST_EVENTS',
         'GOOGLECALENDAR_CREATE_EVENT',
         'GOOGLECALENDAR_UPDATE_EVENT',
-        'GOOGLECALENDAR_DELETE_EVENT'
+        'GOOGLECALENDAR_DELETE_EVENT',
+        'GOOGLECALENDAR_FIND_FREE_TIME',
+        'GOOGLECALENDAR_GET_EVENT',
+        'GOOGLECALENDAR_MOVE_EVENT',
+        'GOOGLECALENDAR_LIST_CALENDARS'
       ]
     }, entityId);
     
@@ -148,7 +152,7 @@ async function checkConnectionStatus(userEmail) {
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'SmartPlan API Server with Composio + OpenAI',
+    message: 'SmartPlan API Server with Composio + OpenAI Agent',
     status: 'running',
     clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
     endpoints: {
@@ -159,7 +163,7 @@ app.get('/', (req, res) => {
       testConnection: '/api/composio/test-connection',
       stats: '/api/stats'
     },
-    note: 'This server uses Composio + OpenAI for user-specific Google Calendar management.',
+    note: 'This server uses an OpenAI agent with Composio Google Calendar tools for intelligent calendar management.',
     userConnections: userConnections.size,
     userEntities: userEntities.size,
     timestamp: new Date().toISOString()
@@ -220,7 +224,7 @@ app.post('/api/composio/setup-connection', async (req, res) => {
   }
 });
 
-// AI Chat endpoint with Composio tools
+// AI Chat endpoint with OpenAI agent and Composio tools
 app.post('/api/ai/send-message', async (req, res) => {
   try {
     const { message, userEmail, context } = req.body;
@@ -241,7 +245,7 @@ app.post('/api/ai/send-message', async (req, res) => {
       });
     }
     
-    console.log(`💬 Processing AI message for ${userEmail}: "${message}"`);
+    console.log(`🤖 Processing AI message for ${userEmail}: "${message}"`);
     
     // Check connection status
     const connectionStatus = await checkConnectionStatus(userEmail);
@@ -284,85 +288,117 @@ app.post('/api/ai/send-message', async (req, res) => {
       });
     }
     
-    // Get user-specific tools
+    // Get user-specific Composio tools
     const tools = await getUserTools(userEmail);
     
-    // Build context for the AI
+    // Build comprehensive context for the AI agent
     const contextInfo = [];
     if (context?.currentDate) {
-      contextInfo.push(`Current date: ${context.currentDate}`);
+      contextInfo.push(`Current date and time: ${new Date(context.currentDate).toLocaleString()}`);
     }
     if (context?.events && context.events.length > 0) {
       const todayEvents = context.events.filter(e => 
         e.date === context.currentDate?.split('T')[0]
       );
       if (todayEvents.length > 0) {
-        contextInfo.push(`Today's events: ${todayEvents.map(e => `${e.startTime} - ${e.title}`).join(', ')}`);
+        contextInfo.push(`Today's local events: ${todayEvents.map(e => `${e.startTime} - ${e.title} (${e.category?.name || 'No category'})`).join(', ')}`);
+      }
+      
+      // Add upcoming events for the next few days
+      const upcomingEvents = context.events.filter(e => {
+        const eventDate = new Date(e.date);
+        const today = new Date(context.currentDate);
+        const diffTime = eventDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        return diffDays > 0 && diffDays <= 7;
+      }).slice(0, 5);
+      
+      if (upcomingEvents.length > 0) {
+        contextInfo.push(`Upcoming events this week: ${upcomingEvents.map(e => `${e.date} ${e.startTime} - ${e.title}`).join(', ')}`);
       }
     }
     if (context?.preferences?.focusAreas) {
       contextInfo.push(`User's focus areas: ${context.preferences.focusAreas.join(', ')}`);
     }
+    if (context?.preferences?.productivityHours) {
+      contextInfo.push(`User's most productive hours: ${context.preferences.productivityHours.join(', ')}`);
+    }
+    if (context?.preferences?.workingHours) {
+      contextInfo.push(`User's working hours: ${context.preferences.workingHours.start} to ${context.preferences.workingHours.end}`);
+    }
     
     const systemContext = contextInfo.length > 0 ? contextInfo.join('\n') : '';
     
-    // Create enhanced prompt for calendar management
-    const enhancedPrompt = `You are a personal AI calendar assistant for ${userEmail}. 
+    // Create comprehensive system prompt for the OpenAI agent
+    const systemPrompt = `You are an intelligent calendar assistant for ${userEmail}. You have access to Google Calendar tools through Composio and can perform various calendar operations.
+
+AVAILABLE TOOLS:
+- GOOGLECALENDAR_LIST_EVENTS: Get events from Google Calendar
+- GOOGLECALENDAR_CREATE_EVENT: Create new calendar events
+- GOOGLECALENDAR_UPDATE_EVENT: Modify existing events
+- GOOGLECALENDAR_DELETE_EVENT: Remove events
+- GOOGLECALENDAR_QUICK_ADD: Create events using natural language
+- GOOGLECALENDAR_FIND_FREE_TIME: Find available time slots
+- GOOGLECALENDAR_GET_EVENT: Get details of a specific event
+- GOOGLECALENDAR_MOVE_EVENT: Reschedule events
+- GOOGLECALENDAR_LIST_CALENDARS: List available calendars
+
+CONTEXT:
+${systemContext}
+
+INSTRUCTIONS:
+1. Always be helpful, friendly, and proactive
+2. When users ask about their schedule, use GOOGLECALENDAR_LIST_EVENTS to get current information
+3. For creating events, prefer GOOGLECALENDAR_CREATE_EVENT for structured data or GOOGLECALENDAR_QUICK_ADD for natural language
+4. When scheduling, consider the user's preferences and existing events to avoid conflicts
+5. Use GOOGLECALENDAR_FIND_FREE_TIME to suggest optimal scheduling times
+6. Be specific about dates and times when creating or modifying events
+7. Confirm actions before performing destructive operations like deleting events
+8. Provide helpful suggestions based on the user's focus areas and productivity patterns
+9. If you need to check for conflicts or find free time, use the appropriate tools first
+10. Always explain what you're doing and why
+
+PERSONALITY:
+- Professional but friendly
+- Proactive in suggesting improvements
+- Considerate of user's time and preferences
+- Clear in communication about what actions you're taking
+
+Remember: You have direct access to ${userEmail}'s Google Calendar through these tools. Use them intelligently to provide the best possible assistance.`;
+
+    console.log(`🤖 Sending request to OpenAI agent for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
     
-${systemContext ? `Context:\n${systemContext}\n\n` : ''}
-
-User request: "${message}"
-
-You have access to Google Calendar tools to help manage ${userEmail}'s calendar. You can:
-- Create calendar events
-- List existing events  
-- Update events
-- Delete events
-- Quick add events using natural language
-
-Please help ${userEmail} with their calendar request. If they want to schedule something, use the appropriate calendar tools. Always be helpful and confirm what actions you're taking.
-
-Important: When creating events, always include specific details like:
-- Clear event title
-- Specific date and time
-- Duration or end time
-- Any relevant description
-
-Be conversational and friendly in your responses.`;
-    
-    console.log(`🤖 Sending request to OpenAI for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
-    
-    // Generate response using OpenAI with Composio tools
+    // Generate response using OpenAI agent with Composio tools
     const output = await generateText({
       model: openai("gpt-4o"),
       tools: tools,
-      prompt: enhancedPrompt,
+      system: systemPrompt,
+      prompt: message,
       maxToolRoundtrips: 5,
+      temperature: 0.7,
     });
     
-    // Generate a user-friendly summary
-    const finalOutput = await generateText({
-      model: openai("gpt-4o"),
-      prompt: `Based on these calendar operations for ${userEmail}:
-      
-Tool calls: ${JSON.stringify(output.toolCalls)}
-Results: ${JSON.stringify(output.toolResults)}
-
-Provide a friendly, conversational summary of what was accomplished for ${userEmail}. If calendar events were created, updated, or managed, mention the specific details. If there were any issues, explain them clearly. Keep the tone helpful and personal.
-
-If no calendar operations were performed, just provide a helpful response to their message.`,
-      maxToolRoundtrips: 1,
-    });
+    console.log(`✅ OpenAI agent completed processing for ${userEmail}`);
+    console.log(`📊 Tool calls made: ${output.toolCalls?.length || 0}`);
+    console.log(`📋 Tool results: ${output.toolResults?.length || 0}`);
     
-    console.log(`✅ Generated AI response for ${userEmail}`);
+    // Log tool usage for debugging
+    if (output.toolCalls && output.toolCalls.length > 0) {
+      console.log('🔧 Tools used:');
+      output.toolCalls.forEach((call, index) => {
+        console.log(`  ${index + 1}. ${call.toolName} - ${call.args ? JSON.stringify(call.args).substring(0, 100) : 'no args'}...`);
+      });
+    }
     
     res.json({
       success: true,
       response: {
-        message: finalOutput.text,
+        message: output.text,
         toolCalls: output.toolCalls,
         toolResults: output.toolResults,
-        userEmail: userEmail
+        userEmail: userEmail,
+        toolsUsed: output.toolCalls?.length || 0,
+        reasoning: output.reasoning || null
       },
       timestamp: new Date().toISOString()
     });
@@ -436,7 +472,7 @@ app.post('/api/composio/test-connection', async (req, res) => {
         features: {
           googleCalendarIntegration: 'active',
           composioTools: 'available',
-          openaiIntegration: 'active',
+          openaiAgent: 'active',
           userSpecificEntity: 'enabled'
         },
         timestamp: new Date().toISOString()
@@ -533,7 +569,7 @@ app.use('*', (req, res) => {
       'POST /api/composio/test-connection',
       'GET /api/stats'
     ],
-    note: 'This is an API server with Composio + OpenAI integration. Visit http://localhost:5173 for the client application.',
+    note: 'This is an API server with OpenAI agent + Composio integration. Visit http://localhost:5173 for the client application.',
     userConnections: userConnections.size,
     userEntities: userEntities.size,
     timestamp: new Date().toISOString()
@@ -542,7 +578,7 @@ app.use('*', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log('🚀 SmartPlan Server with Composio + OpenAI started successfully!');
+  console.log('🚀 SmartPlan Server with OpenAI Agent + Composio started successfully!');
   console.log(`📡 Server running on port ${PORT}`);
   console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔗 CORS enabled for: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
@@ -561,15 +597,15 @@ app.listen(PORT, () => {
   console.log('  GET  /api/stats');
   console.log('');
   console.log('✅ Server is ready to handle requests!');
-  console.log('🤖 Each authenticated user gets their own Composio entity and Google Calendar connection.');
-  console.log('🔐 User-specific calendar management with complete data isolation.');
-  console.log('🎯 OpenAI + Composio integration for intelligent calendar operations.');
+  console.log('🤖 OpenAI Agent with intelligent tool selection for calendar management');
+  console.log('🔐 User-specific calendar management with complete data isolation');
+  console.log('🎯 Composio Google Calendar tools available to the AI agent');
   console.log('');
   console.log('🎯 To use the application:');
   console.log('   👉 Visit: http://localhost:5173');
-  console.log('   📱 This server (port 3001) is the API backend');
+  console.log('   📱 This server (port 3001) is the API backend with OpenAI agent');
   console.log('   🖥️  The client app (port 5173) is the user interface');
-  console.log('   👤 Each authenticated user gets their own Composio entity');
+  console.log('   🤖 Each user gets their own AI agent with Composio tools');
 });
 
 export default app;
