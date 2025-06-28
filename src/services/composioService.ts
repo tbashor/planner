@@ -3,6 +3,16 @@
  * Each authenticated user gets their own Composio entity and Google Calendar connection
  */
 
+import type { 
+  ComposioToolCall, 
+  ComposioToolResult, 
+  ComposioConnection, 
+  ComposioConnectionFeatures, 
+  ComposioServiceStats, 
+  UserCalendarEvent, 
+  UserPreferencesContext 
+} from '../types';
+
 export interface ComposioConnectionResponse {
   success: boolean;
   userEmail?: string;
@@ -19,11 +29,13 @@ export interface AIMessageResponse {
   success: boolean;
   response?: {
     message: string;
-    toolCalls?: any[];
-    toolResults?: any[];
+    toolCalls?: ComposioToolCall[];
+    toolResults?: ComposioToolResult[];
     userEmail?: string;
     needsConnection?: boolean;
+    needsSetup?: boolean;
     redirectUrl?: string;
+    toolsUsed?: number;
   };
   error?: string;
   timestamp: string;
@@ -39,7 +51,7 @@ export interface ComposioTestResponse {
     connectionId: string;
     connectionStatus: string;
     toolsAvailable: number;
-    features: any;
+    features: ComposioConnectionFeatures;
   };
   error?: string;
   userEmail?: string;
@@ -105,14 +117,38 @@ class ComposioService {
   }
 
   /**
+   * Setup Composio connection using existing Google OAuth tokens
+   */
+  async setupUserConnectionWithTokens(userEmail: string, accessToken: string, refreshToken?: string): Promise<ComposioConnectionResponse> {
+    if (!userEmail) {
+      throw new Error('User email is required for Composio connection setup');
+    }
+
+    if (!accessToken) {
+      throw new Error('Access token is required for Composio connection setup');
+    }
+
+    console.log(`🔗 Setting up Composio connection using existing OAuth tokens for user: ${userEmail}`);
+
+    return this.makeRequest('/api/composio/setup-connection-with-tokens', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        userEmail, 
+        accessToken, 
+        refreshToken 
+      }),
+    });
+  }
+
+  /**
    * Send message to AI with user-specific Composio tools
    */
   async sendMessage(
     message: string,
     userEmail: string,
     context?: {
-      events?: any[];
-      preferences?: any;
+      events?: UserCalendarEvent[];
+      preferences?: UserPreferencesContext;
       currentDate?: Date;
     }
   ): Promise<AIMessageResponse> {
@@ -158,7 +194,7 @@ class ComposioService {
   /**
    * Get all user connections
    */
-  async getUserConnections(): Promise<{ success: boolean; connections: any[]; userCount: number; timestamp: string }> {
+  async getUserConnections(): Promise<{ success: boolean; connections: ComposioConnection[]; userCount: number; timestamp: string }> {
     console.log('📋 Getting all user connections');
 
     return this.makeRequest('/api/composio/connections');
@@ -180,7 +216,7 @@ class ComposioService {
   /**
    * Get service statistics
    */
-  async getServiceStats(): Promise<{ success: boolean; stats: any; timestamp: string }> {
+  async getServiceStats(): Promise<{ success: boolean; stats: ComposioServiceStats; timestamp: string }> {
     console.log('📊 Getting Composio service statistics');
 
     return this.makeRequest('/api/stats');
@@ -191,6 +227,99 @@ class ComposioService {
    */
   getBaseUrl(): string {
     return this.baseUrl;
+  }
+
+  /**
+   * Check connection status for a specific user
+   */
+  async checkConnectionStatus(userEmail: string): Promise<{ success: boolean; status: string; message: string; needsSetup?: boolean; toolsAvailable?: number; connectionData?: ComposioConnection; timestamp: string }> {
+    if (!userEmail) {
+      throw new Error('User email is required for connection status check');
+    }
+
+    console.log(`🔍 Checking connection status for user: ${userEmail}`);
+
+    return this.makeRequest(`/api/composio/status/${encodeURIComponent(userEmail)}`);
+  }
+
+  /**
+   * Handle OAuth completion by checking URL parameters
+   */
+  handleOAuthCompletion(): { success: boolean; userEmail?: string; error?: string } {
+    const urlParams = new URLSearchParams(window.location.search);
+    
+    if (urlParams.get('composio_success') === 'true') {
+      const userEmail = urlParams.get('user');
+      console.log('✅ Composio OAuth completed successfully for:', userEmail);
+      
+      // Clean up URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      return { success: true, userEmail: userEmail || undefined };
+    }
+    
+    if (urlParams.get('composio_error')) {
+      const error = urlParams.get('composio_error');
+      console.error('❌ Composio OAuth error:', error);
+      
+      // Clean up URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      return { success: false, error: error || 'OAuth failed' };
+    }
+    
+    if (urlParams.get('composio_status') === 'completed') {
+      console.log('🔗 Composio OAuth process completed');
+      
+      // Clean up URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      return { success: true };
+    }
+    
+    return { success: false };
+  }
+
+  /**
+   * Poll connection status until it becomes active or times out
+   */
+  async pollConnectionStatus(userEmail: string, maxAttempts: number = 10, intervalMs: number = 3000): Promise<boolean> {
+    if (!userEmail) {
+      throw new Error('User email is required for polling connection status');
+    }
+
+    console.log(`🔄 Polling connection status for ${userEmail} (max ${maxAttempts} attempts)`);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const statusResult = await this.checkConnectionStatus(userEmail);
+        
+        if (statusResult.success && statusResult.status === 'active') {
+          console.log(`✅ Connection became active for ${userEmail} after ${attempt} attempts`);
+          return true;
+        }
+        
+        if (statusResult.success && statusResult.status === 'error') {
+          console.error(`❌ Connection failed for ${userEmail}:`, statusResult.message);
+          return false;
+        }
+        
+        console.log(`⏳ Attempt ${attempt}/${maxAttempts}: Connection status for ${userEmail}: ${statusResult.status}`);
+        
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+      } catch (error) {
+        console.warn(`⚠️ Error polling connection status (attempt ${attempt}):`, error);
+        
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+      }
+    }
+    
+    console.warn(`⏰ Connection polling timed out for ${userEmail} after ${maxAttempts} attempts`);
+    return false;
   }
 }
 

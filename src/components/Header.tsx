@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Settings, User, Moon, Sun, RotateCcw, Calendar, BellRing, LogOut, Shield, Sparkles, Trash2, Save } from 'lucide-react';
+import { Search, Bell, Settings, Moon, Sun, RotateCcw, Calendar, BellRing, Shield, Sparkles, Trash2, Save } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { oauthService } from '../services/oauthService';
 import { googleCalendarService } from '../services/googleCalendarService';
@@ -37,8 +37,17 @@ export default function Header() {
       event.description?.includes('Suggested by AI')
     );
 
-    // Clear all stored data except potentially AI events
-    localStorage.clear();
+    // Clear app-specific data but preserve authentication tokens
+    const keysToRemove = [
+      'smartplan_user',
+      'smartplan_onboarding_complete', 
+      'smartplan_events',
+      'smartplan_dark_mode',
+      'smartplan_chat_messages'
+    ];
+    
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    console.log('🧹 Cleared app data while preserving OAuth tokens');
 
     if (keepAiEvents && aiEvents.length > 0) {
       // Save AI events to be restored after reset

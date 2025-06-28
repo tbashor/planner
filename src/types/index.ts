@@ -71,3 +71,86 @@ export interface TimeSlot {
   hour: number;
   minute: number;
 }
+
+// Composio Service Types
+export interface ComposioToolCall {
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, unknown>;
+}
+
+export interface ComposioToolResult {
+  toolCallId: string;
+  result: unknown;
+  isError?: boolean;
+  errorMessage?: string;
+}
+
+export interface ComposioConnection {
+  id: string;
+  appName: string;
+  status: string;
+  createdAt: string;
+  updatedAt?: string;
+  entityId: string;
+  userId?: string;
+}
+
+export interface ComposioConnectionFeatures {
+  googleCalendarIntegration: string;
+  composioTools: string;
+  openaiAgent: string;
+  userSpecificEntity: string;
+}
+
+export interface ComposioServiceStats {
+  userConnections: number;
+  userEntities: number;
+  uptime: number;
+  memory: {
+    rss: number;
+    heapTotal: number;
+    heapUsed: number;
+    external: number;
+    arrayBuffers: number;
+  };
+  nodeVersion: string;
+  platform: string;
+  services: {
+    openai: string;
+    composio: string;
+  };
+  userDetails: {
+    connectedUsers: string[];
+    entityUsers: string[];
+    userEntityMapping: Array<{
+      userEmail: string;
+      entityId: string;
+      connectionStatus: string;
+    }>;
+  };
+  timestamp: string;
+}
+
+export interface UserCalendarEvent {
+  id: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  date: string;
+  description?: string;
+  location?: string;
+  attendees?: Array<{ email: string; name?: string }>;
+  calendar?: { id: string; name: string };
+}
+
+export interface UserPreferencesContext {
+  focusAreas?: string[];
+  productivityHours?: string[];
+  workingHours?: {
+    start: string;
+    end: string;
+  };
+  dailyRoutines?: string[];
+  goals?: string;
+}

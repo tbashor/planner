@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, RefreshCw, ExternalLink } from 'lucide-react';
+import { Lightbulb, Send, Mic, Sparkles, AlertCircle, Settings, Link, TestTube, Calendar, Shield, CheckCircle, Brain, Zap, ExternalLink } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
-import composioService from '../../services/composioService';
+import composioService, { ComposioTestResponse } from '../../services/composioService';
 import { googleCalendarService } from '../../services/googleCalendarService';
+import { oauthService } from '../../services/oauthService';
 
 // Extend Window interface for webkit speech recognition
 declare global {
@@ -30,12 +31,14 @@ export default function AiSidebar() {
   const [connectionStatus, setConnectionStatus] = useState<string>('unknown');
   const [showComposioSettings, setShowComposioSettings] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [testResults, setTestResults] = useState<any>(null);
+  const [testResults, setTestResults] = useState<ComposioTestResponse | null>(null);
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
   const [lastToolsUsed, setLastToolsUsed] = useState<number>(0);
   const [isSettingUpConnection, setIsSettingUpConnection] = useState(false);
   const [setupRedirectUrl, setSetupRedirectUrl] = useState<string | null>(null);
+  const [lastSetupAttempt, setLastSetupAttempt] = useState<number>(0);
+  const [isCheckingConnections, setIsCheckingConnections] = useState<boolean>(false);
 
   // Helper function to validate if an email is real (not a fallback) - memoized to prevent excessive calls
   const isValidRealEmail = useCallback((email: string): boolean => {
@@ -76,14 +79,36 @@ export default function AiSidebar() {
   // Get the authenticated user email from the app state - memoized to prevent excessive calls
   const getAuthenticatedUserEmail = useMemo((): string | null => {
     if (state.user?.email && isValidRealEmail(state.user.email)) {
+      console.log(`✅ Valid authenticated user email found: ${state.user.email}`);
       return state.user.email;
     }
+    console.log(`⚠️ No valid user email found. Current state:`, {
+      userEmail: state.user?.email,
+      userExists: !!state.user,
+      isValid: state.user?.email ? isValidRealEmail(state.user.email) : false
+    });
     return null;
   }, [state.user?.email, isValidRealEmail]);
 
   // Check server availability and connections - debounced to prevent excessive calls
   const checkServerAndConnections = useCallback(async () => {
+    // Prevent overlapping connection checks
+    if (isCheckingConnections) {
+      console.log('⚠️ Connection check already in progress, skipping duplicate');
+      return;
+    }
+    
+    // Debounce to prevent excessive calls
+    const now = Date.now();
+    if (now - lastSetupAttempt < 1000) {
+      console.log('⚠️ Connection check called too recently, skipping');
+      return;
+    }
+    
+    setIsCheckingConnections(true);
+    
     try {
+      console.log('🔍 Checking server and connections...');
       // Check server availability
       const available = await composioService.isServerAvailable();
       setServerAvailable(available);
@@ -139,15 +164,87 @@ export default function AiSidebar() {
       setConnectionStatus('error');
       setComposioConnectionError('Failed to check AI agent connection');
       console.error('❌ Error checking AI agent connection:', error);
+    } finally {
+      setIsCheckingConnections(false);
     }
-  }, [getAuthenticatedUserEmail]);
+  }, [getAuthenticatedUserEmail, isCheckingConnections]);
 
+  // Handle OAuth completion on page load
+  useEffect(() => {
+    const handleOAuthCompletion = () => {
+      const oauthResult = composioService.handleOAuthCompletion();
+      
+      if (oauthResult.success && oauthResult.userEmail) {
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `oauth_complete_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `🎉 Excellent! Your Google Calendar authentication completed successfully for ${oauthResult.userEmail}. I'm now setting up your AI agent with full calendar access...`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        
+        // Start polling for connection to become active
+        if (oauthResult.userEmail === getAuthenticatedUserEmail) {
+          setTimeout(() => {
+            composioService.pollConnectionStatus(oauthResult.userEmail!, 8, 2000)
+              .then((success) => {
+                if (success) {
+                  setIsComposioConnected(true);
+                  setConnectionStatus('active');
+                  setComposioConnectionError(null);
+                  setSetupRedirectUrl(null);
+                  
+                  dispatch({
+                    type: 'ADD_CHAT_MESSAGE',
+                    payload: {
+                      id: `oauth_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                      type: 'ai',
+                      content: `✅ Perfect! Your AI agent is now fully active and ready to manage your Google Calendar. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+                      timestamp: new Date().toISOString(),
+                    },
+                  });
+                } else {
+                  dispatch({
+                    type: 'ADD_CHAT_MESSAGE',
+                    payload: {
+                      id: `oauth_timeout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                      type: 'ai',
+                      content: `⚠️ Your Google Calendar authentication completed, but the AI agent connection is taking longer than expected to activate. Please try using the "Test Connection" button or ask me a question to check if it's working.`,
+                      timestamp: new Date().toISOString(),
+                    },
+                  });
+                }
+              })
+              .catch((error) => {
+                console.error('Error polling connection status:', error);
+              });
+          }, 1000);
+        }
+      } else if (oauthResult.success === false && oauthResult.error) {
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `oauth_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `❌ Google Calendar authentication failed: ${oauthResult.error}. Please try the "Setup Connection" button again.`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    };
+    
+    handleOAuthCompletion();
+  }, []); // Run once on component mount
+  
   // Only check connections when user email changes, not on every render
   useEffect(() => {
     if (getAuthenticatedUserEmail) {
+      console.log(`🔄 useEffect triggered for user: ${getAuthenticatedUserEmail}`);
       checkServerAndConnections();
     }
-  }, [getAuthenticatedUserEmail, checkServerAndConnections]);
+  }, [getAuthenticatedUserEmail]);
 
   const handleSetupConnection = async () => {
     const userEmail = getAuthenticatedUserEmail;
@@ -156,6 +253,21 @@ export default function AiSidebar() {
       return;
     }
 
+    // Prevent multiple concurrent setup calls with debouncing
+    const now = Date.now();
+    if (isSettingUpConnection) {
+      console.log('⚠️ Setup already in progress, ignoring duplicate request');
+      return;
+    }
+    
+    // Debounce: prevent requests within 3 seconds of each other
+    if (now - lastSetupAttempt < 3000) {
+      console.log('⚠️ Setup called too recently, debouncing request');
+      return;
+    }
+    
+    setLastSetupAttempt(now);
+
     setIsSettingUpConnection(true);
     setComposioConnectionError(null);
     setSetupRedirectUrl(null);
@@ -163,6 +275,93 @@ export default function AiSidebar() {
     try {
       console.log(`🔗 Setting up Composio connection for user: ${userEmail}`);
       
+      // First, try to use existing Google OAuth tokens if available
+      const tokens = oauthService.getStoredTokens();
+      const isGoogleAuth = googleCalendarService.isAuthenticated();
+      
+      console.log('🔍 Checking for existing tokens:', {
+        hasTokens: !!tokens,
+        hasAccessToken: !!(tokens?.access_token),
+        isGoogleAuth,
+        tokenPreview: tokens?.access_token ? `${tokens.access_token.substring(0, 20)}...` : 'none'
+      });
+      
+      if (tokens && tokens.access_token && isGoogleAuth) {
+        console.log('✅ Found existing Google OAuth tokens, using them for Composio connection');
+        
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `🔗 Perfect! I found your existing Google Calendar authentication for ${userEmail}. Setting up AI agent connection directly without requiring additional authentication...`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+
+        // Use existing tokens to create Composio connection
+        console.log('🚀 Calling setupUserConnectionWithTokens with:', {
+          userEmail,
+          hasAccessToken: !!tokens.access_token,
+          hasRefreshToken: !!(tokens as unknown as Record<string, unknown>).refresh_token
+        });
+        
+        const result = await composioService.setupUserConnectionWithTokens(
+          userEmail, 
+          tokens.access_token, 
+          (tokens as unknown as Record<string, unknown>).refresh_token as string
+        );
+        
+        console.log('📥 Token-based setup result:', result);
+        
+        if (result.success) {
+          setIsComposioConnected(true);
+          setConnectionStatus(result.status || 'active');
+          setComposioConnectionError(null);
+          setSetupRedirectUrl(null);
+          
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `🎉 Excellent! Your AI agent connection for ${userEmail} is now active using your existing Google Calendar authentication. No additional OAuth required! I can now manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+          
+          // Refresh connection status
+          setTimeout(() => {
+            checkServerAndConnections();
+          }, 2000);
+          
+          return; // Success with existing tokens
+        } else {
+          console.warn('⚠️ Failed to setup connection with existing tokens, falling back to OAuth flow');
+          dispatch({
+            type: 'ADD_CHAT_MESSAGE',
+            payload: {
+              id: `composio_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'ai',
+              content: `⚠️ Could not use existing authentication, falling back to standard OAuth flow: ${result.error}`,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      } else {
+        console.log('⚠️ No valid Google OAuth tokens found, using standard OAuth flow');
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: {
+            id: `composio_oauth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'ai',
+            content: `🔗 Setting up AI agent connection for ${userEmail}. Since no existing Google Calendar authentication was found, you'll need to complete OAuth authentication...`,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+      
+      // Fallback: Use standard OAuth flow if tokens don't work
       const result = await composioService.setupUserConnection(userEmail);
       
       if (result.success) {
@@ -173,11 +372,9 @@ export default function AiSidebar() {
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
-              id: `composio_setup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              id: `composio_oauth_redirect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🔗 Great! I'm setting up your AI agent for ${userEmail}. Please complete the Google Calendar authentication using the link below. This will give me access to your calendar through Composio tools.
-
-Once you've authenticated, I'll be able to manage your Google Calendar directly using AI commands!`,
+              content: `🔗 Please complete the Google Calendar authentication using the link below. This will give me access to your calendar through Composio tools.`,
               timestamp: new Date().toISOString(),
             },
           });
@@ -189,9 +386,9 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
           dispatch({
             type: 'ADD_CHAT_MESSAGE',
             payload: {
-              id: `composio_ready_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              id: `composio_ready_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'ai',
-              content: `🎉 Perfect! Your AI agent connection for ${userEmail} is now active. I can manage your Google Calendar using AI commands. Try asking me to "schedule a meeting tomorrow at 2pm" or "what's on my calendar today?"`,
+              content: `🎉 Perfect! Your AI agent connection for ${userEmail} is now active. I can manage your Google Calendar using AI commands.`,
               timestamp: new Date().toISOString(),
             },
           });
@@ -204,8 +401,8 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
       } else {
         setComposioConnectionError(result.error || 'Failed to setup AI agent connection');
       }
-    } catch (error) {
-      console.error('❌ Error setting up Composio connection:', error);
+    } catch (setupError) {
+      console.error('❌ Error setting up Composio connection:', setupError);
       setComposioConnectionError('Failed to setup AI agent connection');
     } finally {
       setIsSettingUpConnection(false);
@@ -240,7 +437,7 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
               });
             }
           }
-        } catch (error) {
+        } catch {
           // Continue polling
         }
       }, 3000);
@@ -432,7 +629,11 @@ Once you've authenticated, I'll be able to manage your Google Calendar directly 
     } catch (error) {
       console.error('❌ AI agent connection test error:', error);
       setComposioConnectionError('AI agent connection test failed');
-      setTestResults({ success: false, error: error.message });
+      setTestResults({ 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
+      });
     } finally {
       setIsTestingConnection(false);
     }

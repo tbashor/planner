@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, ExternalLink, RefreshCw, Calendar, User, AlertCircle, Loader2 } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import { googleCalendarService } from '../../services/googleCalendarService';
@@ -55,6 +55,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   });
 
   const totalSteps = 8;
+
+  // Ref to track setup state synchronously (prevents race conditions)
+  const isSettingUpComposioRef = useRef(false);
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -271,7 +274,14 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       return;
     }
 
+    // Prevent concurrent setup calls (race condition protection)
+    if (isSettingUpComposioRef.current) {
+      console.log('⚠️ Composio setup already in progress, skipping duplicate call');
+      return;
+    }
+
     console.log('🔗 Setting up Composio connection for validated email:', userEmail);
+    isSettingUpComposioRef.current = true; // Set immediately, synchronously
     setAuthStatus(prev => ({ ...prev, isSettingUpComposio: true }));
     setAuthError(null);
 
@@ -281,6 +291,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       
       if (testResult.success && testResult.testResult) {
         console.log('✅ Composio connection already exists and is active');
+        isSettingUpComposioRef.current = false; // Reset ref
         setAuthStatus(prev => ({
           ...prev,
           composioConnected: true,
@@ -331,6 +342,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 popup.close();
                 clearInterval(checkInterval);
                 setAuthError('Authentication timeout. Please try again.');
+                isSettingUpComposioRef.current = false; // Reset ref on timeout
                 setAuthStatus(prev => ({ ...prev, isSettingUpComposio: false }));
               }
             }, 5 * 60 * 1000);
@@ -340,6 +352,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         } else {
           // Connection setup complete
           console.log('✅ Composio connection setup complete');
+          isSettingUpComposioRef.current = false; // Reset ref
           setAuthStatus(prev => ({
             ...prev,
             composioConnected: true,
@@ -351,6 +364,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       }
     } catch (error) {
       console.error('❌ Error setting up Composio connection:', error);
+      
+      // Reset ref on error
+      isSettingUpComposioRef.current = false;
       
       // For demo purposes, if Composio setup fails, we'll mark it as connected anyway
       // This allows the user to proceed with the onboarding
@@ -379,6 +395,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       
       if (testResult.success && testResult.testResult) {
         console.log('✅ Composio connection verified successfully');
+        isSettingUpComposioRef.current = false; // Reset ref
         setAuthStatus(prev => ({
           ...prev,
           composioConnected: true,
@@ -388,6 +405,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       } else {
         console.warn('❌ Composio connection verification failed, but allowing to proceed');
         // For demo purposes, mark as connected even if verification fails
+        isSettingUpComposioRef.current = false; // Reset ref
         setAuthStatus(prev => ({
           ...prev,
           composioConnected: true,
@@ -397,6 +415,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     } catch (error) {
       console.error('❌ Error verifying Composio connection, but allowing to proceed:', error);
       // For demo purposes, mark as connected even if verification fails
+      isSettingUpComposioRef.current = false; // Reset ref
       setAuthStatus(prev => ({
         ...prev,
         composioConnected: true,
