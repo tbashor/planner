@@ -223,6 +223,8 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
       };
 
       if (currentMode === 'create') {
+        console.log('🆕 Creating new event:', eventData.title);
+        
         if (onEventCreate) {
           // Use the custom create handler that handles Google Calendar sync
           await onEventCreate(eventData);
@@ -242,8 +244,9 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
             setConfirmationMessage(`Perfect! "${eventData.title}" has been added to your calendar for ${format(new Date(eventData.date), 'EEEE, MMMM d')}.`);
           }
         }
-      } else {
-        // Update event
+      } else if (currentMode === 'edit') {
+        console.log('✏️ Updating existing event:', eventData.title, 'ID:', eventData.id);
+        
         if (onEventUpdate) {
           // Use the custom update handler that handles Google Calendar sync
           await onEventUpdate(eventData);
@@ -607,7 +610,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                   state.isDarkMode ? 'text-white' : 'text-gray-900'
                 }`}>
                   {currentMode === 'create' ? 'Create New Event' : 
-                   currentMode === 'edit' ? 'Edit Event' : 'Event Details'}
+                   currentMode === 'edit' ? 'Update Event' : 'Event Details'}
                   {event?.isRecurring && (
                     <span className="ml-2 px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded-full">
                       Recurring
@@ -618,7 +621,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                   state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   {currentMode === 'create' ? 'Tell me about your new event' : 
-                   currentMode === 'edit' ? 'Make any changes you need' : 'View event information'}
+                   currentMode === 'edit' ? 'Update the event details' : 'View event information'}
                   {isAuthenticated && (
                     <span className="ml-2 text-green-600">• Syncs with Google Calendar</span>
                   )}
@@ -998,7 +1001,7 @@ export default function EventDialog({ isOpen, onClose, event, initialDate, initi
                     <Save className="h-4 w-4" />
                     <span>
                       {isSubmitting ? 'Saving...' : 
-                       currentMode === 'create' ? 'Create Event' : 'Save Changes'}
+                       currentMode === 'create' ? 'Create Event' : 'Update Event'}
                     </span>
                   </button>
                 </div>
