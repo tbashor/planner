@@ -3,6 +3,7 @@ import { Check, X, Clock, Zap, Target, Coffee, Calendar, Dumbbell, BookOpen, Bri
 import { AiSuggestion, Event } from '../../types';
 import { useApp } from '../../contexts/AppContext';
 import { eventCategories } from '../../data/mockData';
+import { createEventWithConflictDetection } from '../../utils/aiUtils';
 
 interface AiSuggestionCardProps {
   suggestion: AiSuggestion;
@@ -56,34 +57,49 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
       // Parse the action to see if it's a create_event action
       const actionData = JSON.parse(suggestion.action);
       
-      if (actionData.type === 'create_event' && actionData.event) {
+      if (actionData.type === 'create_event' || actionData.type === 'create_event_with_conflict_detection') {
         const eventData = actionData.event;
         
-        // Create the new event
-        const newEvent: Event = {
-          id: `event_${Date.now()}`,
-          title: eventData.title,
-          startTime: eventData.startTime,
-          endTime: eventData.endTime,
-          date: eventData.date,
-          category: getCategoryByName(eventData.category),
-          priority: eventData.priority,
-          description: eventData.description || '',
-          isCompleted: false,
-          isStatic: false,
-          color: getCategoryByName(eventData.category).color,
-        };
+        // Create the new event with conflict detection
+        const result = createEventWithConflictDetection(
+          {
+            title: eventData.title,
+            startTime: eventData.startTime,
+            endTime: eventData.endTime,
+            date: eventData.date,
+            category: getCategoryByName(eventData.category),
+            priority: eventData.priority,
+            description: eventData.description || '',
+            isCompleted: false,
+            isStatic: false,
+            color: getCategoryByName(eventData.category).color,
+          },
+          state.events,
+          state.user?.preferences
+        );
 
-        // Add the event to the calendar
-        dispatch({ type: 'ADD_EVENT', payload: newEvent });
+        // Add the new event to the calendar
+        dispatch({ type: 'ADD_EVENT', payload: result.event });
 
-        // Add success message
+        // Handle any rearranged events
+        if (result.conflictResolution?.rearrangedEvents.length > 0) {
+          result.conflictResolution.rearrangedEvents.forEach(rearrangedEvent => {
+            dispatch({ type: 'UPDATE_EVENT', payload: rearrangedEvent });
+          });
+        }
+
+        // Add success message with conflict resolution info
+        const baseMessage = `🎉 Perfect! I've added "${result.event.title}" to your calendar for ${result.event.date} at ${result.event.startTime}.`;
+        const conflictMessage = result.conflictResolution?.hasConflict 
+          ? ` ${result.conflictResolution.message}`
+          : ` This aligns perfectly with your ${state.user?.preferences.focusAreas?.join(' and ') || 'goals'}!`;
+
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
-            id: Date.now().toString(),
+            id: `suggestion_accept_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
-            content: `🎉 Perfect! I've added "${newEvent.title}" to your calendar for ${newEvent.date} at ${newEvent.startTime}. This aligns perfectly with your ${state.user?.preferences.focusAreas?.join(' and ') || 'goals'}!`,
+            content: baseMessage + conflictMessage,
             timestamp: new Date().toISOString(),
           },
         });
@@ -92,7 +108,7 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
         dispatch({
           type: 'ADD_CHAT_MESSAGE',
           payload: {
-            id: Date.now().toString(),
+            id: `suggestion_other_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'ai',
             content: `✅ Great choice! I've applied the suggestion: "${suggestion.title}". Your schedule has been optimized based on your preferences.`,
             timestamp: new Date().toISOString(),
@@ -100,11 +116,12 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
         });
       }
     } catch (error) {
+      console.error('Error processing suggestion:', error);
       // Fallback for non-JSON actions
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `suggestion_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `✅ Excellent! I've applied the suggestion: "${suggestion.title}". Your schedule is now optimized for better productivity.`,
           timestamp: new Date().toISOString(),
@@ -123,9 +140,9 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `suggestion_reject_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ai',
-        content: `No problem! I've removed that suggestion. I'll keep learning your preferences to provide better recommendations.`,
+        content: `No problem! I've removed that suggestion. I'll keep learning your preferences to provide better recommendations that avoid conflicts.`,
         timestamp: new Date().toISOString(),
       },
     });
@@ -152,6 +169,13 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
           }`}>
             {suggestion.description}
           </p>
+          {suggestion.type === 'schedule' && (
+            <p className={`text-xs mt-1 ${
+              state.isDarkMode ? 'text-blue-400' : 'text-blue-600'
+            }`}>
+              ⚡ Smart scheduling with automatic conflict resolution
+            </p>
+          )}
         </div>
       </div>
       
@@ -170,7 +194,7 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
         <button
           onClick={handleAccept}
           className="p-1.5 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors duration-200"
-          title="Accept and add to calendar"
+          title="Accept and add to calendar (with conflict resolution)"
         >
           <Check className="h-3 w-3" />
         </button>

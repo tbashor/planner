@@ -1,6 +1,7 @@
 import { Event, AiSuggestion, UserPreferences } from '../types';
 import { format, addDays, addHours, startOfDay, parse } from 'date-fns';
 import { eventCategories } from '../data/mockData';
+import { detectAndResolveConflicts, findAvailableTimeSlots, getEventDuration } from './conflictDetection';
 
 export function generateSmartSuggestions(
   events: Event[],
@@ -201,11 +202,23 @@ export function generatePersonalizedSuggestions(
     return array[randomIndex];
   };
 
-  // Helper function to get random time that doesn't conflict with existing events
-  const getAvailableTime = (preferredTimes: string[], targetDate: string) => {
-    const dayEvents = events.filter(e => e.date === targetDate);
-    const busyTimes = dayEvents.map(e => e.startTime);
+  // Enhanced helper function to get available time that doesn't conflict with existing events
+  const getAvailableTime = (preferredTimes: string[], targetDate: string, duration: number = 60) => {
+    const workingHours = preferences.workingHours || { start: '08:00', end: '22:00' };
     
+    // Find all available slots for the given duration
+    const availableSlots = findAvailableTimeSlots(
+      targetDate,
+      duration,
+      events,
+      workingHours
+    );
+
+    if (availableSlots.length === 0) {
+      // If no slots available, return a preferred time anyway (conflict will be handled later)
+      return getRandomItem(preferredTimes, Math.floor(Math.random() * 100));
+    }
+
     // If user has productivity hours, prefer those times
     const userPreferredTimes = productivityHours.length > 0 
       ? productivityHours.filter(hour => preferredTimes.includes(hour))
@@ -213,18 +226,22 @@ export function generatePersonalizedSuggestions(
     
     const timesToCheck = userPreferredTimes.length > 0 ? userPreferredTimes : preferredTimes;
     
-    const availableTimes = timesToCheck.filter(time => 
-      !busyTimes.some(busyTime => Math.abs(
-        parseInt(time.split(':')[0]) - parseInt(busyTime.split(':')[0])
-      ) < 1)
+    // Find available slots that match preferred times
+    const preferredAvailableSlots = availableSlots.filter(slot => 
+      timesToCheck.some(time => slot.startTime === time)
     );
     
-    return availableTimes.length > 0 
-      ? getRandomItem(availableTimes, Math.floor(Math.random() * 100))
-      : getRandomItem(preferredTimes, Math.floor(Math.random() * 100));
+    if (preferredAvailableSlots.length > 0) {
+      const chosenSlot = getRandomItem(preferredAvailableSlots, Math.floor(Math.random() * 100));
+      return chosenSlot.startTime;
+    }
+    
+    // If no preferred slots, use any available slot
+    const chosenSlot = getRandomItem(availableSlots, Math.floor(Math.random() * 100));
+    return chosenSlot.startTime;
   };
 
-  // Generate suggestions based on focus areas with personalization
+  // Generate suggestions based on focus areas with conflict detection
   focusAreas.forEach((area, index) => {
     let categoryKey = '';
     let categoryId = '';
@@ -267,29 +284,32 @@ export function generatePersonalizedSuggestions(
         ? productivityHours
         : template.times;
       
-      const startTime = getAvailableTime(preferredTimes, tomorrow);
-      const endTime = addMinutesToTime(startTime, duration);
-
       // Vary the target date
       const targetDates = [tomorrow, dayAfterTomorrow];
       const targetDate = getRandomItem(targetDates, index);
+      
+      const startTime = getAvailableTime(preferredTimes, targetDate, duration);
+      const endTime = addMinutesToTime(startTime, duration);
+
+      // Create the event suggestion with conflict detection built-in
+      const eventSuggestion = {
+        title: title,
+        startTime: startTime,
+        endTime: endTime,
+        date: targetDate,
+        category: categoryId,
+        priority: getRandomItem(['medium', 'high'], index),
+        description: `${description}. Suggested by AI based on your focus on ${area.replace('-', ' & ')}.`
+      };
 
       suggestions.push({
         id: `${categoryKey}-${sessionId}-${index}`,
         type: 'schedule',
         title: title,
-        description: `${description} - Aligned with your ${area.replace('-', ' & ')} focus area${productivityHours.length > 0 && (categoryKey === 'study' || categoryKey === 'work') ? ' during your peak hours' : ''}`,
+        description: `${description} - Aligned with your ${area.replace('-', ' & ')} focus area${productivityHours.length > 0 && (categoryKey === 'study' || categoryKey === 'work') ? ' during optimal hours' : ''}`,
         action: JSON.stringify({
-          type: 'create_event',
-          event: {
-            title: title,
-            startTime: startTime,
-            endTime: endTime,
-            date: targetDate,
-            category: categoryId,
-            priority: getRandomItem(['medium', 'high'], index),
-            description: `${description}. Suggested by AI based on your focus on ${area.replace('-', ' & ')}.`
-          }
+          type: 'create_event_with_conflict_detection',
+          event: eventSuggestion
         }),
         priority: 1,
         createdAt: new Date().toISOString(),
@@ -297,7 +317,7 @@ export function generatePersonalizedSuggestions(
     }
   });
 
-  // Enhanced routine-based suggestions with user preferences
+  // Enhanced routine-based suggestions with conflict detection
   dailyRoutines.forEach((routine, index) => {
     const routineTime = getCurrentTimeForRoutine(routine, preferences);
     const routineDuration = getDurationForRoutine(routine);
@@ -307,17 +327,19 @@ export function generatePersonalizedSuggestions(
       const exerciseTitle = getRandomItem(healthTemplate.titles, sessionId % 7);
       const exerciseDescription = getRandomItem(healthTemplate.descriptions, sessionId % 7);
       
+      const finalTime = routineTime || getAvailableTime(['07:00', '07:30', '18:00', '18:30'], tomorrow, routineDuration);
+      
       suggestions.push({
         id: `routine-exercise-${sessionId}`,
         type: 'schedule',
         title: `Daily ${exerciseTitle}`,
-        description: `${exerciseDescription} - Part of your daily routine${routineTime ? ` at ${routineTime}` : ''}`,
+        description: `${exerciseDescription} - Part of your daily routine${routineTime ? ` at ${routineTime}` : ' at an optimal time'}`,
         action: JSON.stringify({
-          type: 'create_event',
+          type: 'create_event_with_conflict_detection',
           event: {
             title: exerciseTitle,
-            startTime: routineTime || '07:00',
-            endTime: addMinutesToTime(routineTime || '07:00', routineDuration),
+            startTime: finalTime,
+            endTime: addMinutesToTime(finalTime, routineDuration),
             date: tomorrow,
             category: 'health',
             priority: 'medium',
@@ -330,17 +352,19 @@ export function generatePersonalizedSuggestions(
     }
     
     if (routine === 'breakfast') {
+      const breakfastTime = getAvailableTime(['08:00', '08:30', '09:00'], tomorrow, 30);
+      
       suggestions.push({
         id: `routine-breakfast-${sessionId}`,
         type: 'schedule',
         title: 'Mindful Breakfast',
         description: 'Start your day with proper nutrition - part of your daily routine',
         action: JSON.stringify({
-          type: 'create_event',
+          type: 'create_event_with_conflict_detection',
           event: {
             title: 'Breakfast',
-            startTime: '08:00',
-            endTime: '08:30',
+            startTime: breakfastTime,
+            endTime: addMinutesToTime(breakfastTime, 30),
             date: tomorrow,
             category: 'meal',
             priority: 'medium',
@@ -353,17 +377,19 @@ export function generatePersonalizedSuggestions(
     }
     
     if (routine === 'lunch') {
+      const lunchTime = getAvailableTime(['12:00', '12:30', '13:00'], tomorrow, 30);
+      
       suggestions.push({
         id: `routine-lunch-${sessionId}`,
         type: 'schedule',
         title: 'Lunch Break',
         description: 'Fuel your afternoon with healthy food - part of your daily routine',
         action: JSON.stringify({
-          type: 'create_event',
+          type: 'create_event_with_conflict_detection',
           event: {
             title: 'Lunch',
-            startTime: '12:30',
-            endTime: '13:00',
+            startTime: lunchTime,
+            endTime: addMinutesToTime(lunchTime, 30),
             date: tomorrow,
             category: 'meal',
             priority: 'medium',
@@ -417,7 +443,7 @@ export function generatePersonalizedSuggestions(
     });
   }
 
-  // Enhanced break suggestions based on user preferences
+  // Enhanced break suggestions based on user preferences with conflict detection
   const intensiveEvents = events.filter(e => 
     (e.category.name === 'Study' || e.category.name === 'Work') && 
     e.date === today
@@ -446,7 +472,7 @@ export function generatePersonalizedSuggestions(
           title: `Add ${breakTitle}`,
           description: `${breakDescription} between "${current.title}" and "${next.title}"${preferences.focusAreas?.includes('health-fitness') ? ' - supports your health focus' : ''}`,
           action: JSON.stringify({
-            type: 'create_event',
+            type: 'create_event_with_conflict_detection',
             event: {
               title: breakTitle,
               startTime: current.endTime,
@@ -465,7 +491,7 @@ export function generatePersonalizedSuggestions(
     }
   }
 
-  // Goals-based suggestions
+  // Goals-based suggestions with conflict detection
   if (preferences.goals && preferences.goals.trim()) {
     const goalKeywords = preferences.goals.toLowerCase();
     let goalSuggestion = null;
@@ -494,7 +520,11 @@ export function generatePersonalizedSuggestions(
     }
     
     if (goalSuggestion) {
-      const goalTime = getAvailableTime(productivityHours.length > 0 ? productivityHours : ['10:00', '14:00', '16:00'], tomorrow);
+      const goalTime = getAvailableTime(
+        productivityHours.length > 0 ? productivityHours : ['10:00', '14:00', '16:00'], 
+        tomorrow, 
+        goalSuggestion.duration
+      );
       
       suggestions.push({
         id: `goal-focused-${sessionId}`,
@@ -502,7 +532,7 @@ export function generatePersonalizedSuggestions(
         title: goalSuggestion.title,
         description: `${goalSuggestion.description} - aligned with your goals: "${preferences.goals.substring(0, 50)}${preferences.goals.length > 50 ? '...' : ''}"`,
         action: JSON.stringify({
-          type: 'create_event',
+          type: 'create_event_with_conflict_detection',
           event: {
             title: goalSuggestion.title,
             startTime: goalTime,
@@ -551,7 +581,7 @@ function getDurationForRoutine(routine: string): number {
   return durations[routine] || 30;
 }
 
-// Natural Language Processing for Event Creation with enhanced personalization
+// Natural Language Processing for Event Creation with enhanced personalization and conflict detection
 export function parseEventFromMessage(message: string, userPreferences: UserPreferences): Event | null {
   const lowerMessage = message.toLowerCase();
   
@@ -789,8 +819,8 @@ export function generateAIResponse(message: string, userPreferences: UserPrefere
 
   // Default response for event creation with personalization
   const personalizedResponse = userPreferences.focusAreas?.length > 0 
-    ? ` I'll optimize the timing based on your focus areas (${userPreferences.focusAreas.slice(0, 2).join(', ')}) and preferences!`
-    : ' I\'ll find the optimal timing based on your preferences!';
+    ? ` I'll optimize the timing based on your focus areas (${userPreferences.focusAreas.slice(0, 2).join(', ')}) and preferences, and automatically handle any scheduling conflicts!`
+    : ' I\'ll find the optimal timing based on your preferences and handle any conflicts automatically!';
     
   return `I understand you'd like to schedule something. I've analyzed your request and will add it to your calendar with${personalizedResponse}`;
 }
@@ -946,5 +976,64 @@ export function analyzeProductivityPatterns(events: Event[], userPreferences?: U
     leastProductiveHours: sortedHours.slice(-3).map(([hour]) => `${hour}:00`),
     averageTaskDuration: completedEvents.length > 0 ? Math.round(totalDuration / completedEvents.length) : 0,
     alignmentWithPreferences: maxAlignment > 0 ? Math.round((alignmentScore / maxAlignment) * 100) : 0,
+  };
+}
+
+/**
+ * Enhanced event creation with conflict detection and resolution
+ */
+export function createEventWithConflictDetection(
+  newEvent: Omit<Event, 'id'>,
+  existingEvents: Event[],
+  userPreferences?: UserPreferences
+): {
+  event: Event;
+  conflictResolution?: {
+    hasConflict: boolean;
+    message: string;
+    rearrangedEvents: Event[];
+  };
+} {
+  const eventWithId = {
+    ...newEvent,
+    id: `ai_event_${Date.now()}`
+  };
+
+  // Detect and resolve conflicts
+  const conflictResult = detectAndResolveConflicts(newEvent, existingEvents, userPreferences);
+
+  if (!conflictResult.hasConflict) {
+    return { event: eventWithId };
+  }
+
+  if (conflictResult.suggestedResolution) {
+    const { newEventSlot, rearrangedEvents, message } = conflictResult.suggestedResolution;
+    
+    // Update the new event with the suggested time slot
+    const finalEvent = {
+      ...eventWithId,
+      startTime: newEventSlot.startTime,
+      endTime: newEventSlot.endTime,
+      date: newEventSlot.date
+    };
+
+    return {
+      event: finalEvent,
+      conflictResolution: {
+        hasConflict: true,
+        message,
+        rearrangedEvents
+      }
+    };
+  }
+
+  // If no resolution possible, return the event as-is with conflict warning
+  return {
+    event: eventWithId,
+    conflictResolution: {
+      hasConflict: true,
+      message: `Warning: "${newEvent.title}" conflicts with existing events but couldn't be automatically resolved. Please check your schedule.`,
+      rearrangedEvents: []
+    }
   };
 }

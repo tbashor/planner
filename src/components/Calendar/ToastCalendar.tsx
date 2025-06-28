@@ -13,6 +13,7 @@ import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw } from 'luci
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { mockEvents } from '../../data/mockData';
 import composioService from '../../services/composioService';
+import { createEventWithConflictDetection, checkEventUpdateConflicts } from '../../utils/aiUtils';
 
 interface ToastCalendarEvent {
   id: string;
@@ -313,13 +314,12 @@ export default function ToastCalendar() {
     ],
   };
 
-  // Event handlers
+  // Event handlers with conflict detection
   const onBeforeCreateEvent = async (eventData: any) => {
     const startDate = new Date(eventData.start);
     
     // Create the event object
-    const newEvent: Event = {
-      id: `event_${Date.now()}`,
+    const newEventData = {
       title: eventData.title || 'New Event',
       startTime: format(startDate, 'HH:mm'),
       endTime: format(new Date(eventData.end), 'HH:mm'),
@@ -330,91 +330,132 @@ export default function ToastCalendar() {
         color: '#3B82F6',
         icon: 'Calendar',
       },
-      priority: 'medium',
+      priority: 'medium' as const,
       description: '',
       isCompleted: false,
       isStatic: false,
       color: '#3B82F6',
     };
 
-    console.log('📝 Creating new event from calendar click:', newEvent.title);
+    console.log('📝 Creating new event from calendar click with conflict detection:', newEventData.title);
+
+    // Use conflict detection for event creation
+    const result = createEventWithConflictDetection(
+      newEventData,
+      state.events,
+      state.user?.preferences
+    );
 
     // Add to local state first
-    const updatedEvents = [...state.events, newEvent];
+    const updatedEvents = [...state.events, result.event];
+    
+    // Handle any rearranged events
+    if (result.conflictResolution?.rearrangedEvents.length > 0) {
+      result.conflictResolution.rearrangedEvents.forEach(rearrangedEvent => {
+        const eventIndex = updatedEvents.findIndex(e => e.id === rearrangedEvent.id);
+        if (eventIndex !== -1) {
+          updatedEvents[eventIndex] = rearrangedEvent;
+        }
+      });
+    }
+    
     setEventsHistory(updatedEvents);
 
     // Sync with Google Calendar
-    const syncSuccess = await syncEventWithGoogleCalendar(newEvent, 'create');
+    const syncSuccess = await syncEventWithGoogleCalendar(result.event, 'create');
+    
+    // Create appropriate message based on conflict resolution
+    let message = `📅 Perfect! I've created "${result.event.title}"`;
+    
+    if (result.conflictResolution?.hasConflict) {
+      message += ` and handled scheduling conflicts automatically. ${result.conflictResolution.message}`;
+    } else {
+      message += ` for ${format(new Date(result.event.date), 'EEEE, MMMM d')} at ${result.event.startTime}`;
+    }
     
     if (syncSuccess) {
-      // Refresh calendar data to get the latest from Google Calendar
-      setTimeout(() => fetchCurrentWeek(), 1000);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `📅 Perfect! I've created "${newEvent.title}" and synced it with your Google Calendar. Both calendars are now identical. Click on the event to edit details.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+      message += ' and synced it with your Google Calendar. Both calendars are now identical.';
     } else {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `📅 I've created "${newEvent.title}" locally. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect Google Calendar to sync events across devices.'}`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+      message += `. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect Google Calendar to sync events across devices.'}`;
     }
+    
+    message += ' Click on the event to edit details.';
+    
+    if (syncSuccess) {
+      setTimeout(() => fetchCurrentWeek(), 1000);
+    }
+    
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: `create_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai',
+        content: message,
+        timestamp: new Date().toISOString(),
+      },
+    });
   };
 
   const onBeforeUpdateEvent = async (updateData: any) => {
     const { event, changes } = updateData;
     const updatedEvent = convertFromToastEvent({ ...event, ...changes });
     
-    console.log('🔄 Updating event via drag/resize:', {
+    console.log('🔄 Updating event via drag/resize with conflict detection:', {
       eventId: event.id,
       title: updatedEvent.title,
       changes
     });
     
+    // Check for conflicts with the updated event
+    const conflictResult = checkEventUpdateConflicts(
+      updatedEvent,
+      state.events,
+      state.user?.preferences
+    );
+    
     // Update local state first
-    const updatedEvents = state.events.map(e => 
+    let updatedEvents = state.events.map(e => 
       e.id === updatedEvent.id ? updatedEvent : e
     );
+    
+    // Handle any rearranged events from conflict resolution
+    if (conflictResult.suggestedResolution?.rearrangedEvents.length > 0) {
+      conflictResult.suggestedResolution.rearrangedEvents.forEach(rearrangedEvent => {
+        const eventIndex = updatedEvents.findIndex(e => e.id === rearrangedEvent.id);
+        if (eventIndex !== -1) {
+          updatedEvents[eventIndex] = rearrangedEvent;
+        }
+      });
+    }
+    
     setEventsHistory(updatedEvents);
 
     // Sync with Google Calendar
     const syncSuccess = await syncEventWithGoogleCalendar(updatedEvent, 'update');
     
-    if (syncSuccess) {
-      // Refresh calendar data to get the latest from Google Calendar
-      setTimeout(() => fetchCurrentWeek(), 1000);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `✅ Perfect! I've updated "${updatedEvent.title}" and synced the changes with your Google Calendar. Both calendars are now identical.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } else {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `✅ I've updated "${updatedEvent.title}" locally. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync changes across devices.'}`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+    // Create appropriate message based on conflict resolution
+    let message = `✅ Perfect! I've updated "${updatedEvent.title}"`;
+    
+    if (conflictResult.hasConflict && conflictResult.suggestedResolution) {
+      message += ` and resolved scheduling conflicts. ${conflictResult.suggestedResolution.message}`;
     }
+    
+    if (syncSuccess) {
+      message += ' and synced the changes with your Google Calendar. Both calendars are now identical.';
+      setTimeout(() => fetchCurrentWeek(), 1000);
+    } else {
+      message += `. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync changes across devices.'}`;
+    }
+    
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: `update_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai',
+        content: message,
+        timestamp: new Date().toISOString(),
+      },
+    });
   };
 
   const onBeforeDeleteEvent = async (eventData: any) => {
@@ -444,7 +485,7 @@ export default function ToastCalendar() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `delete_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `🗑️ I've successfully deleted "${eventData.title}" from both your local calendar and Google Calendar. Both calendars are now identical.`,
           timestamp: new Date().toISOString(),
@@ -454,7 +495,7 @@ export default function ToastCalendar() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `delete_local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: `🗑️ I've removed "${eventData.title}" locally. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync deletions across devices.'}`,
           timestamp: new Date().toISOString(),
@@ -549,7 +590,7 @@ export default function ToastCalendar() {
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
-          id: Date.now().toString(),
+          id: `sync_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
           content: '🔗 Please connect your Google Calendar first to sync events.',
           timestamp: new Date().toISOString(),
@@ -564,7 +605,7 @@ export default function ToastCalendar() {
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: {
-        id: Date.now().toString(),
+        id: `sync_success_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ai',
         content: '🔄 Calendar sync completed! Your local calendar and Google Calendar are now identical.',
         timestamp: new Date().toISOString(),
@@ -572,80 +613,114 @@ export default function ToastCalendar() {
     });
   };
 
-  // Enhanced event creation handler for dialog
+  // Enhanced event creation handler for dialog with conflict detection
   const handleCreateEventFromDialog = async (eventData: Event) => {
-    console.log('📝 Creating event from dialog:', eventData.title);
+    console.log('📝 Creating event from dialog with conflict detection:', eventData.title);
     
+    // Use conflict detection for event creation
+    const result = createEventWithConflictDetection(
+      eventData,
+      state.events,
+      state.user?.preferences
+    );
+
     // Add to local state first
-    const updatedEvents = [...state.events, eventData];
+    let updatedEvents = [...state.events, result.event];
+    
+    // Handle any rearranged events
+    if (result.conflictResolution?.rearrangedEvents.length > 0) {
+      result.conflictResolution.rearrangedEvents.forEach(rearrangedEvent => {
+        const eventIndex = updatedEvents.findIndex(e => e.id === rearrangedEvent.id);
+        if (eventIndex !== -1) {
+          updatedEvents[eventIndex] = rearrangedEvent;
+        }
+      });
+    }
+    
     setEventsHistory(updatedEvents);
 
     // Sync with Google Calendar
-    const syncSuccess = await syncEventWithGoogleCalendar(eventData, 'create');
+    const syncSuccess = await syncEventWithGoogleCalendar(result.event, 'create');
+    
+    // Create appropriate message based on conflict resolution
+    let message = `📅 Excellent! I've created "${result.event.title}"`;
+    
+    if (result.conflictResolution?.hasConflict) {
+      message += ` and automatically resolved scheduling conflicts. ${result.conflictResolution.message}`;
+    }
     
     if (syncSuccess) {
-      // Refresh calendar data to get the latest from Google Calendar
+      message += ' and synced it with your Google Calendar. Both calendars are now identical.';
       setTimeout(() => fetchCurrentWeek(), 1000);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `📅 Excellent! I've created "${eventData.title}" and synced it with your Google Calendar. Both calendars are now identical.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
     } else {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `📅 I've created "${eventData.title}" locally. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync events across devices.'}`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+      message += `. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync events across devices.'}`;
     }
+    
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: `dialog_create_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai',
+        content: message,
+        timestamp: new Date().toISOString(),
+      },
+    });
   };
 
-  // Enhanced event update handler for dialog
+  // Enhanced event update handler for dialog with conflict detection
   const handleUpdateEventFromDialog = async (eventData: Event) => {
-    console.log('🔄 Updating event from dialog:', eventData.title, 'ID:', eventData.id);
+    console.log('🔄 Updating event from dialog with conflict detection:', eventData.title, 'ID:', eventData.id);
+    
+    // Check for conflicts with the updated event
+    const conflictResult = checkEventUpdateConflicts(
+      eventData,
+      state.events,
+      state.user?.preferences
+    );
     
     // Update local state first
-    const updatedEvents = state.events.map(e => 
+    let updatedEvents = state.events.map(e => 
       e.id === eventData.id ? eventData : e
     );
+    
+    // Handle any rearranged events from conflict resolution
+    if (conflictResult.suggestedResolution?.rearrangedEvents.length > 0) {
+      conflictResult.suggestedResolution.rearrangedEvents.forEach(rearrangedEvent => {
+        const eventIndex = updatedEvents.findIndex(e => e.id === rearrangedEvent.id);
+        if (eventIndex !== -1) {
+          updatedEvents[eventIndex] = rearrangedEvent;
+        }
+      });
+    }
+    
     setEventsHistory(updatedEvents);
 
     // Sync with Google Calendar
     const syncSuccess = await syncEventWithGoogleCalendar(eventData, 'update');
     
-    if (syncSuccess) {
-      // Refresh calendar data to get the latest from Google Calendar
-      setTimeout(() => fetchCurrentWeek(), 1000);
-      
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `✅ Perfect! I've updated "${eventData.title}" and synced the changes with your Google Calendar. Both calendars are now identical.`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } else {
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `✅ I've updated "${eventData.title}" locally. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync changes across devices.'}`,
-          timestamp: new Date().toISOString(),
-        },
-      });
+    // Create appropriate message based on conflict resolution
+    let message = `✅ Perfect! I've updated "${eventData.title}"`;
+    
+    if (conflictResult.hasConflict && conflictResult.suggestedResolution) {
+      message += ` and resolved scheduling conflicts. ${conflictResult.suggestedResolution.message}`;
     }
+    
+    if (syncSuccess) {
+      message += ' and synced the changes with your Google Calendar. Both calendars are now identical.';
+      setTimeout(() => fetchCurrentWeek(), 1000);
+    } else {
+      message += `. ${isAuthenticated ? 'Google Calendar sync failed - please try the manual sync button.' : 'Connect your Google Calendar to sync changes across devices.'}`;
+    }
+    
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: `dialog_update_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai',
+        content: message,
+        timestamp: new Date().toISOString(),
+      },
+    });
   };
 
   // Keyboard shortcuts
@@ -732,12 +807,12 @@ export default function ToastCalendar() {
               <h2 className={`font-semibold ${
                 state.isDarkMode ? 'text-white' : 'text-gray-900'
               }`}>
-                Calendar
+                Smart Calendar
               </h2>
               <p className={`text-xs ${
                 state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                {isAuthenticated ? `✅ Synced with ${userEmail}` : '📱 Local calendar only'}
+                {isAuthenticated ? `✅ Synced with ${userEmail}` : '📱 Local calendar only'} • ⚡ Auto-conflict resolution
               </p>
             </div>
           </div>
@@ -791,7 +866,7 @@ export default function ToastCalendar() {
           {/* Quick Actions */}
           <button
             onClick={() => setQuickCreator({ isOpen: true })}
-            title="Quick Create (Ctrl+N)"
+            title="Quick Create (Ctrl+N) - with conflict detection"
             className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
               state.isDarkMode
                 ? 'bg-purple-600 text-white hover:bg-purple-700'
@@ -799,11 +874,12 @@ export default function ToastCalendar() {
             }`}
           >
             <Zap className="h-4 w-4" />
-            <span>Quick Add</span>
+            <span>Smart Add</span>
           </button>
 
           <button
             onClick={() => setEventDialog({ isOpen: true, mode: 'create' })}
+            title="New Event - with automatic conflict resolution"
             className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
               state.isDarkMode
                 ? 'bg-green-600 text-white hover:bg-green-700'
@@ -879,7 +955,7 @@ export default function ToastCalendar() {
             : 'bg-green-50 text-green-700 border-gray-200'
         }`}>
           <div className="flex items-center justify-between">
-            <span>🔄 Real-time sync enabled with Google Calendar</span>
+            <span>🔄 Real-time sync enabled with Google Calendar • ⚡ Smart conflict resolution active</span>
             <span>Last sync: {new Date().toLocaleTimeString()}</span>
           </div>
         </div>
