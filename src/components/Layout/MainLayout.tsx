@@ -12,7 +12,7 @@ export default function MainLayout() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className={`h-screen grid grid-cols-[400px_1fr] grid-rows-[auto_200px_1fr] ${
+      <div className={`h-screen grid grid-cols-[400px_1fr] grid-rows-[auto_1fr_1fr] ${
         state.isDarkMode ? 'bg-gray-900' : 'bg-gray-50'
       }`}>
         {/* Header - spans full width */}
