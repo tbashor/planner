@@ -235,10 +235,10 @@ export default function Header() {
       <header className={`${
         state.isDarkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
       } border-b transition-colors duration-200`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            {/* Logo */}
-            <div className="flex items-center">
+            {/* Logo - aligned to left edge */}
+            <div className="flex items-center flex-shrink-0">
               <div className={`${
                 state.isDarkMode ? 'bg-blue-600' : 'bg-blue-500'
               } rounded-lg p-2 mr-3`}>
@@ -253,8 +253,8 @@ export default function Header() {
               </h1>
             </div>
 
-            {/* Search Bar */}
-            <div className="flex-1 max-w-lg mx-8">
+            {/* Search Bar - centered */}
+            <div className="flex-1 max-w-lg mx-8 hidden md:block">
               <form onSubmit={handleSearch} className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Search className={`h-5 w-5 ${
@@ -275,8 +275,8 @@ export default function Header() {
               </form>
             </div>
 
-            {/* Right Side Actions */}
-            <div className="flex items-center space-x-4">
+            {/* Right Side Actions - aligned to right edge */}
+            <div className="flex items-center space-x-4 flex-shrink-0">
               {/* Authentication Status Indicators */}
               {authState.connectionStatus === 'error' && (
                 <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs ${
@@ -285,7 +285,7 @@ export default function Header() {
                     : 'bg-red-100 text-red-700'
                 }`}>
                   <AlertTriangle className="h-3 w-3" />
-                  <span>Connection Error</span>
+                  <span className="hidden sm:inline">Connection Error</span>
                 </div>
               )}
               {authState.connectionStatus === 'checking' && (
@@ -295,7 +295,7 @@ export default function Header() {
                     : 'bg-blue-100 text-blue-700'
                 }`}>
                   <RefreshCw className="h-3 w-3 animate-spin" />
-                  <span>Checking...</span>
+                  <span className="hidden sm:inline">Checking...</span>
                 </div>
               )}
               {authState.connectionStatus === 'disconnected' && !authState.isLoading && (
@@ -305,7 +305,7 @@ export default function Header() {
                     : 'bg-yellow-100 text-yellow-700'
                 }`}>
                   <AlertTriangle className="h-3 w-3" />
-                  <span>Disconnected</span>
+                  <span className="hidden sm:inline">Disconnected</span>
                 </div>
               )}
 
