@@ -74,7 +74,7 @@ class ComposioService {
   private async checkServerHealth(): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for health check
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // Increased to 5 seconds for health check
       
       const response = await fetch(`${this.baseUrl}/api/health`, {
         method: 'GET',
@@ -107,9 +107,12 @@ class ComposioService {
       
       console.log('📤 Making Composio request to:', url);
       
-      // Increase timeout to 30 seconds for complex operations
+      // Set appropriate timeout based on endpoint
+      const isOAuthEndpoint = endpoint.includes('oauth') || endpoint.includes('setup-connection');
+      const timeoutMs = isOAuthEndpoint ? 10000 : 30000; // 10s for OAuth setup, 30s for other operations
+      
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await fetch(url, {
         headers: {
@@ -176,11 +179,14 @@ class ComposioService {
 
     console.log(`🔗 Setting up Composio OAuth connection for user: ${userEmail}`);
 
+    // Use the OAuth callback route for Composio redirects
+    const finalRedirectUrl = redirectUrl || `${window.location.origin}/oauth/callback`;
+
     return this.makeRequest('/api/composio/setup-connection-with-oauth', {
       method: 'POST',
       body: JSON.stringify({ 
         userEmail, 
-        redirectUrl 
+        redirectUrl: finalRedirectUrl
       }),
     });
   }

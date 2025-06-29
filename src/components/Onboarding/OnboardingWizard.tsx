@@ -24,7 +24,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [currentStep, setCurrentStep] = useState(1);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [authStep, setAuthStep] = useState<'idle' | 'popup' | 'polling'>('idle');
   const [serverStatus, setServerStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
   const [authStatus, setAuthStatus] = useState<{
     googleAuthenticated: boolean;
@@ -105,6 +104,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   }, [serverStatus]);
 
+  // Check for Composio OAuth callback on mount
+  useEffect(() => {
+    checkForComposioCallback();
+  }, []);
+
   // Also check when the component becomes visible (user returns from OAuth)
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -138,6 +142,86 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   };
 
+  const checkForComposioCallback = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const state = urlParams.get('state');
+    const composioSuccess = urlParams.get('composio_success');
+    const composioError = urlParams.get('composio_error');
+    const userEmail = urlParams.get('user');
+
+    // Check for Composio OAuth callback
+    if (composioSuccess === 'true' && userEmail) {
+      console.log('✅ Composio OAuth callback detected for:', userEmail);
+      handleComposioOAuthSuccess(userEmail);
+      return;
+    }
+
+    if (composioError) {
+      console.error('❌ Composio OAuth error:', composioError);
+      setAuthError(`Authentication failed: ${composioError}`);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+
+    // Check for generic OAuth callback (might be Composio)
+    if (code && state) {
+      console.log('🔄 OAuth callback detected, checking if it\'s Composio...');
+      const storedEmail = localStorage.getItem('onboarding_user_email');
+      if (storedEmail) {
+        console.log('📧 Found stored email for OAuth callback:', storedEmail);
+        // Wait a moment for the server to process the callback
+        setTimeout(() => {
+          checkAuthenticationStatus();
+        }, 2000);
+      }
+    }
+  };
+
+  const handleComposioOAuthSuccess = async (userEmail: string) => {
+    console.log('🎉 Processing Composio OAuth success for:', userEmail);
+    setIsAuthenticating(true);
+    
+    try {
+      // Clean up URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      // Generate user name from email
+      const userName = userEmail.split('@')[0]
+        .replace(/[._]/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+      
+      // Update auth status
+      setAuthStatus(prev => ({
+        ...prev,
+        googleAuthenticated: true,
+        composioConnected: true,
+        userEmail,
+        userName,
+        isCheckingAuth: false,
+        hasValidEmail: true,
+        composioSkipped: false,
+      }));
+
+      // Update form data
+      updateData('email', userEmail);
+      updateData('name', userName);
+      
+      // Clean up stored email
+      localStorage.removeItem('onboarding_user_email');
+      
+      setAuthError(null);
+      console.log('✅ Composio OAuth processing completed successfully');
+      
+    } catch (error) {
+      console.error('❌ Error processing Composio OAuth success:', error);
+      setAuthError('Failed to complete authentication setup. Please try again.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const checkAuthenticationStatus = async () => {
     if (serverStatus !== 'available') {
       console.log('⚠️ Skipping auth check - server not available');
@@ -147,64 +231,46 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     console.log('🔍 Checking Composio authentication status...');
     setAuthStatus(prev => ({ ...prev, isCheckingAuth: true }));
     setAuthError(null);
-    setAuthStep('idle');
 
     try {
-      // Check if we're returning from Composio OAuth callback
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
-      const state = urlParams.get('state');
-      
-      if (code && state) {
-        console.log('🔄 Composio OAuth callback detected, processing...');
-        setIsAuthenticating(true);
+      // Check if we have a stored email from a previous attempt
+      const storedEmail = localStorage.getItem('onboarding_user_email');
+      if (storedEmail && isValidRealEmail(storedEmail)) {
+        console.log(`🔍 Checking Composio connection for stored email: ${storedEmail}`);
         
-        // Clear URL parameters
-        window.history.replaceState({}, document.title, window.location.pathname);
-        
-        // Wait for the OAuth callback to be processed by Composio
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        // Try to find which user this callback belongs to by checking recent connections
-        const storedEmail = localStorage.getItem('onboarding_user_email');
-        if (storedEmail && isValidRealEmail(storedEmail)) {
-          console.log(`🔍 Checking Composio connection for stored email: ${storedEmail}`);
-          
-          try {
-            const testResult = await composioService.testUserConnection(storedEmail);
-            if (testResult.success && testResult.testResult) {
-              console.log('✅ Composio OAuth completed successfully');
-              
-              const userName = storedEmail.split('@')[0]
-                .replace(/[._]/g, ' ')
-                .replace(/\b\w/g, l => l.toUpperCase());
-              
-              setAuthStatus(prev => ({
-                ...prev,
-                googleAuthenticated: true,
-                composioConnected: true,
-                userEmail: storedEmail,
-                userName,
-                isCheckingAuth: false,
-                hasValidEmail: true,
-                composioSkipped: false,
-              }));
+        try {
+          const testResult = await composioService.testUserConnection(storedEmail);
+          if (testResult.success && testResult.testResult) {
+            console.log('✅ Found active Composio connection');
+            
+            const userName = storedEmail.split('@')[0]
+              .replace(/[._]/g, ' ')
+              .replace(/\b\w/g, l => l.toUpperCase());
+            
+            setAuthStatus(prev => ({
+              ...prev,
+              googleAuthenticated: true,
+              composioConnected: true,
+              userEmail: storedEmail,
+              userName,
+              isCheckingAuth: false,
+              hasValidEmail: true,
+              composioSkipped: false,
+            }));
 
-              updateData('email', storedEmail);
-              updateData('name', userName);
-              
-              // Clean up stored email
-              localStorage.removeItem('onboarding_user_email');
-              setIsAuthenticating(false);
-              return;
-            }
-          } catch (testError) {
-            console.warn('⚠️ Error testing connection after OAuth callback:', testError);
+            updateData('email', storedEmail);
+            updateData('name', userName);
+            
+            // Clean up stored email
+            localStorage.removeItem('onboarding_user_email');
+            return;
           }
+        } catch (testError) {
+          console.warn('⚠️ Error testing stored connection:', testError);
         }
       }
 
-      // If no active OAuth callback, just check current state
+      // No active connection found
       setAuthStatus(prev => ({
         ...prev,
         isCheckingAuth: false,
@@ -219,8 +285,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         hasValidEmail: false,
         composioSkipped: false,
       }));
-    } finally {
-      setIsAuthenticating(false);
     }
   };
 
@@ -232,7 +296,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
     setIsAuthenticating(true);
     setAuthError(null);
-    setAuthStep('idle');
     
     try {
       const userEmail = authStatus.userEmail;
@@ -245,56 +308,18 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       // Store email for retrieval after OAuth callback
       localStorage.setItem('onboarding_user_email', userEmail);
       
-      // Use Composio OAuth flow - this will handle Google authentication internally
-      const result = await composioService.setupUserConnectionWithOAuth(userEmail);
+      // Get the redirect URL for Composio OAuth
+      const redirectUrl = `${window.location.origin}/oauth/callback`;
+      
+      // Use Composio OAuth flow with full page redirect
+      const result = await composioService.setupUserConnectionWithOAuth(userEmail, redirectUrl);
       
       if (result.success && result.redirectUrl) {
-        console.log('🔗 Opening Composio OAuth in popup...');
-        setAuthStep('popup');
+        console.log('🔗 Redirecting to Composio OAuth...');
         
-        // Open Composio auth in popup
-        const popup = window.open(
-          result.redirectUrl,
-          'composio-auth',
-          'width=600,height=700,scrollbars=yes,resizable=yes,status=yes,location=yes,toolbar=no,menubar=no'
-        );
-
-        if (!popup) {
-          throw new Error('Failed to open popup window. Please allow popups for this site.');
-        }
-
-        // Monitor popup and poll for connection status
-        const monitorPopup = () => {
-          const checkInterval = setInterval(async () => {
-            try {
-              if (popup.closed) {
-                clearInterval(checkInterval);
-                console.log('🪟 Popup closed, verifying connection...');
-                setAuthStep('polling');
-                
-                // Wait a moment then verify connection
-                setTimeout(async () => {
-                  await pollForConnection(userEmail);
-                }, 2000);
-              }
-            } catch {
-              // Ignore cross-origin errors
-            }
-          }, 1000);
-
-          // Timeout after 5 minutes
-          setTimeout(() => {
-            if (!popup.closed) {
-              popup.close();
-              clearInterval(checkInterval);
-              setAuthError('Authentication timeout. Please try again.');
-              setIsAuthenticating(false);
-              setAuthStep('idle');
-            }
-          }, 5 * 60 * 1000);
-        };
-
-        monitorPopup();
+        // Perform full page redirect instead of popup
+        window.location.href = result.redirectUrl;
+        
       } else if (result.success && result.status === 'active') {
         // Already connected
         console.log('✅ Connection already active');
@@ -306,7 +331,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           hasValidEmail: true,
         }));
         setIsAuthenticating(false);
-        setAuthStep('idle');
       } else {
         throw new Error(result.error || 'Failed to initiate Composio OAuth');
       }
@@ -329,75 +353,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       
       setAuthError(errorMessage);
       setIsAuthenticating(false);
-      setAuthStep('idle');
     }
-  };
-
-  const pollForConnection = async (userEmail: string) => {
-    console.log('🔍 Polling for connection status...');
-    let attempts = 0;
-    const maxAttempts = 30; // Poll for up to 30 seconds
-    
-    const pollInterval = setInterval(async () => {
-      attempts++;
-      
-      try {
-        const testResult = await composioService.testUserConnection(userEmail);
-        
-        if (testResult.success && testResult.testResult) {
-          // Connection is active
-          clearInterval(pollInterval);
-          console.log('✅ Composio OAuth completed successfully');
-          
-          const userName = userEmail.split('@')[0]
-            .replace(/[._]/g, ' ')
-            .replace(/\b\w/g, l => l.toUpperCase());
-          
-          setAuthStatus(prev => ({
-            ...prev,
-            googleAuthenticated: true,
-            composioConnected: true,
-            userEmail,
-            userName,
-            isCheckingAuth: false,
-            hasValidEmail: true,
-          }));
-
-          updateData('email', userEmail);
-          updateData('name', userName);
-          
-          // Clean up stored email
-          localStorage.removeItem('onboarding_user_email');
-          setIsAuthenticating(false);
-          setAuthStep('idle');
-          setAuthError(null);
-          return;
-        }
-        
-        if (attempts >= maxAttempts) {
-          // Timeout - stop polling
-          clearInterval(pollInterval);
-          console.warn('⚠️ Connection polling timeout');
-          setAuthError('Connection setup is taking longer than expected. Please check your Composio dashboard or try again.');
-          setIsAuthenticating(false);
-          setAuthStep('idle');
-        }
-      } catch (error) {
-        console.warn(`⚠️ Polling attempt ${attempts} failed:`, error);
-        
-        if (attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          setAuthError('Failed to verify connection. Please try again.');
-          setIsAuthenticating(false);
-          setAuthStep('idle');
-        }
-      }
-    }, 1000); // Poll every second
   };
 
   const handleRetryAuth = () => {
     setAuthError(null);
-    setAuthStep('idle');
     checkServerAvailability();
   };
 
@@ -617,11 +577,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                         {isAuthenticating ? (
                           <>
                             <Loader2 className="h-5 w-5 animate-spin" />
-                            <span>
-                              {authStep === 'popup' ? 'Opening authentication...' :
-                               authStep === 'polling' ? 'Verifying connection...' :
-                               'Connecting via Composio...'}
-                            </span>
+                            <span>Redirecting to authentication...</span>
                           </>
                         ) : (
                           <>
@@ -636,11 +592,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                         <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                           <div className="flex items-center space-x-2 text-sm text-blue-700">
                             <Loader2 className="h-4 w-4 animate-spin" />
-                            <span>
-                              {authStep === 'popup' ? 'Complete authentication in the popup window' :
-                               authStep === 'polling' ? 'Checking connection status...' :
-                               'Preparing authentication...'}
-                            </span>
+                            <span>Preparing secure authentication redirect...</span>
                           </div>
                         </div>
                       )}

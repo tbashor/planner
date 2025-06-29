@@ -4,6 +4,7 @@ import { oauthService } from '../../services/oauthService';
 import { googleCalendarService } from '../../services/googleCalendarService';
 import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
+import composioService from '../../services/composioService';
 
 interface CallbackState {
   status: 'processing' | 'success' | 'error';
@@ -27,94 +28,41 @@ export default function OAuthCallback() {
     try {
       setCallbackState({
         status: 'processing',
-        message: 'Validating authorization code...',
+        message: 'Validating authorization...',
       });
 
       // Get current URL
       const currentUrl = window.location.href;
+      const urlParams = new URLSearchParams(window.location.search);
       console.log('🔍 Processing OAuth callback:', currentUrl);
 
-      // Handle the callback
-      const callbackResult = oauthService.handleCallback(currentUrl);
-      
-      if (!callbackResult) {
-        throw new Error('Failed to process OAuth callback');
+      // Check if this is a Composio OAuth callback
+      const composioSuccess = urlParams.get('composio_success');
+      const composioError = urlParams.get('composio_error');
+      const userEmail = urlParams.get('user');
+
+      if (composioSuccess === 'true' && userEmail) {
+        console.log('✅ Composio OAuth callback detected for:', userEmail);
+        await handleComposioOAuthCallback(userEmail);
+        return;
       }
 
-      const { code, state: stateParam } = callbackResult;
-
-      setCallbackState({
-        status: 'processing',
-        message: 'Exchanging authorization code for access token...',
-      });
-
-      // Exchange code for tokens
-      await oauthService.exchangeCodeForTokens(code, stateParam);
-
-      setCallbackState({
-        status: 'processing',
-        message: 'Retrieving user information...',
-      });
-
-      // Get authenticated user email
-      const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
-      
-      if (!userEmail || userEmail === 'authenticated.user@gmail.com') {
-        throw new Error('Could not retrieve valid user email from Google');
+      if (composioError) {
+        throw new Error(`Composio OAuth error: ${composioError}`);
       }
 
-      console.log('✅ Retrieved authenticated user email:', userEmail);
+      // Check if this is a standard Google OAuth callback
+      const code = urlParams.get('code');
+      const state = urlParams.get('state');
 
-      setCallbackState({
-        status: 'processing',
-        message: 'Setting up AI integration...',
-      });
-
-      // Update AuthContext with successful authentication
-      authDispatch({ 
-        type: 'SET_AUTHENTICATED', 
-        payload: { userEmail } 
-      });
-
-      // Check Composio connection status
-      try {
-        await checkConnectionStatus(userEmail);
-        console.log('✅ Composio connection status checked');
-      } catch (error) {
-        console.warn('⚠️ Failed to check Composio connection:', error);
-        // Don't fail the entire flow if Composio check fails
+      if (code && state) {
+        console.log('🔍 Standard Google OAuth callback detected');
+        await handleGoogleOAuthCallback(currentUrl);
+        return;
       }
 
-      // Connect to server integration if available
-      try {
-        await googleCalendarService.connectToServerIntegration(userEmail);
-        console.log('✅ Connected to server integration');
-      } catch (error) {
-        console.warn('⚠️ Failed to connect to server integration:', error);
-        // Don't fail the entire flow if server integration fails
-      }
-
-      setCallbackState({
-        status: 'success',
-        message: 'Authentication successful!',
-        details: 'Google Calendar is now connected with AI integration. Redirecting...',
-      });
-
-      // Add success message to chat
-      dispatch({
-        type: 'ADD_CHAT_MESSAGE',
-        payload: {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: `🎉 Perfect! Google Calendar is now connected with full editing permissions and AI integration for ${userEmail}. Your calendar events will sync automatically and I can now directly create, update, and manage events in your Google Calendar using natural language commands!`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      // Redirect back to main app after a short delay
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 2000);
+      // If no recognizable callback parameters, show error
+      throw new Error('Invalid OAuth callback - missing required parameters');
 
     } catch (error) {
       console.error('❌ OAuth callback error:', error);
@@ -149,6 +97,174 @@ export default function OAuthCallback() {
         window.location.href = '/';
       }, 5000);
     }
+  };
+
+  const handleComposioOAuthCallback = async (userEmail: string) => {
+    console.log('🎉 Processing Composio OAuth callback for:', userEmail);
+    
+    setCallbackState({
+      status: 'processing',
+      message: 'Verifying Composio connection...',
+    });
+
+    try {
+      // Wait a moment for Composio to process the OAuth completion
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Test the connection to ensure it's active
+      const testResult = await composioService.testUserConnection(userEmail);
+      
+      if (!testResult.success || !testResult.testResult) {
+        throw new Error('Composio connection verification failed');
+      }
+
+      console.log('✅ Composio connection verified successfully');
+
+      setCallbackState({
+        status: 'processing',
+        message: 'Setting up AI integration...',
+      });
+
+      // Generate user name from email
+      const userName = userEmail.split('@')[0]
+        .replace(/[._]/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+
+      // Update AuthContext with successful authentication
+      authDispatch({ 
+        type: 'SET_AUTHENTICATED', 
+        payload: { userEmail } 
+      });
+
+      // Check Composio connection status
+      try {
+        await checkConnectionStatus(userEmail);
+        console.log('✅ Composio connection status checked');
+      } catch (error) {
+        console.warn('⚠️ Failed to check Composio connection:', error);
+        // Don't fail the entire flow if connection check fails
+      }
+
+      setCallbackState({
+        status: 'success',
+        message: 'Authentication successful!',
+        details: 'Google Calendar is now connected with AI integration. Redirecting...',
+      });
+
+      // Add success message to chat
+      dispatch({
+        type: 'ADD_CHAT_MESSAGE',
+        payload: {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `🎉 Perfect! Google Calendar is now connected with full editing permissions and AI integration for ${userEmail}. Your calendar events will sync automatically and I can now directly create, update, and manage events in your Google Calendar using natural language commands!`,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Clean up URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // Redirect back to main app after a short delay
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 2000);
+
+    } catch (error) {
+      console.error('❌ Composio OAuth callback processing error:', error);
+      throw error;
+    }
+  };
+
+  const handleGoogleOAuthCallback = async (currentUrl: string) => {
+    console.log('🔍 Processing standard Google OAuth callback');
+    
+    setCallbackState({
+      status: 'processing',
+      message: 'Validating authorization code...',
+    });
+
+    // Handle the callback
+    const callbackResult = oauthService.handleCallback(currentUrl);
+    
+    if (!callbackResult) {
+      throw new Error('Failed to process OAuth callback');
+    }
+
+    const { code, state: stateParam } = callbackResult;
+
+    setCallbackState({
+      status: 'processing',
+      message: 'Exchanging authorization code for access token...',
+    });
+
+    // Exchange code for tokens
+    await oauthService.exchangeCodeForTokens(code, stateParam);
+
+    setCallbackState({
+      status: 'processing',
+      message: 'Retrieving user information...',
+    });
+
+    // Get authenticated user email
+    const userEmail = await googleCalendarService.getAuthenticatedUserEmail();
+    
+    if (!userEmail || userEmail === 'authenticated.user@gmail.com') {
+      throw new Error('Could not retrieve valid user email from Google');
+    }
+
+    console.log('✅ Retrieved authenticated user email:', userEmail);
+
+    setCallbackState({
+      status: 'processing',
+      message: 'Setting up integration...',
+    });
+
+    // Update AuthContext with successful authentication
+    authDispatch({ 
+      type: 'SET_AUTHENTICATED', 
+      payload: { userEmail } 
+    });
+
+    // Check Composio connection status
+    try {
+      await checkConnectionStatus(userEmail);
+      console.log('✅ Connection status checked');
+    } catch (error) {
+      console.warn('⚠️ Failed to check connection:', error);
+      // Don't fail the entire flow if connection check fails
+    }
+
+    // Connect to server integration if available
+    try {
+      await googleCalendarService.connectToServerIntegration(userEmail);
+      console.log('✅ Connected to server integration');
+    } catch (error) {
+      console.warn('⚠️ Failed to connect to server integration:', error);
+      // Don't fail the entire flow if server integration fails
+    }
+
+    setCallbackState({
+      status: 'success',
+      message: 'Authentication successful!',
+      details: 'Google Calendar is now connected. Redirecting...',
+    });
+
+    // Add success message to chat
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: {
+        id: Date.now().toString(),
+        type: 'ai',
+        content: `🎉 Google Calendar is now connected for ${userEmail}. Your calendar events will sync automatically!`,
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    // Redirect back to main app after a short delay
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 2000);
   };
 
   const getStatusIcon = () => {
