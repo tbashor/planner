@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lightbulb, Sparkles, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import { Lightbulb, Sparkles, ChevronDown, ChevronUp, Zap, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
 import { generatePersonalizedSuggestions } from '../../utils/aiUtils';
@@ -33,6 +33,20 @@ export default function AiSuggestions() {
       });
       setIsGenerating(false);
     }, 1000);
+  };
+
+  const scrollLeft = () => {
+    const container = document.getElementById('suggestions-container');
+    if (container) {
+      container.scrollBy({ left: -300, behavior: 'smooth' });
+    }
+  };
+
+  const scrollRight = () => {
+    const container = document.getElementById('suggestions-container');
+    if (container) {
+      container.scrollBy({ left: 300, behavior: 'smooth' });
+    }
   };
 
   return (
@@ -92,7 +106,7 @@ export default function AiSuggestions() {
 
       {/* Suggestions Content */}
       {isExpanded && (
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-hidden p-4">
           {state.aiSuggestions.length === 0 ? (
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -109,13 +123,54 @@ export default function AiSuggestions() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {state.aiSuggestions.map((suggestion, index) => (
-                <AiSuggestionCard 
-                  key={`${suggestion.id}_${index}`}
-                  suggestion={suggestion} 
-                />
-              ))}
+            <div className="relative">
+              {/* Scroll buttons */}
+              {state.aiSuggestions.length > 1 && (
+                <>
+                  <button
+                    onClick={scrollLeft}
+                    className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 ${
+                      state.isDarkMode
+                        ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-600'
+                        : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                    }`}
+                    style={{ marginLeft: '-12px' }}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={scrollRight}
+                    className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 ${
+                      state.isDarkMode
+                        ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-600'
+                        : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                    }`}
+                    style={{ marginRight: '-12px' }}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+
+              {/* Horizontal scrolling container */}
+              <div
+                id="suggestions-container"
+                className="flex space-x-3 overflow-x-auto scrollbar-hide pb-2"
+                style={{
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none',
+                  WebkitScrollbar: { display: 'none' }
+                }}
+              >
+                {state.aiSuggestions.map((suggestion, index) => (
+                  <div
+                    key={`${suggestion.id}_${index}`}
+                    className="flex-shrink-0 w-80"
+                  >
+                    <AiSuggestionCard suggestion={suggestion} />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
