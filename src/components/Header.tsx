@@ -239,12 +239,12 @@ export default function Header() {
           <div className="flex justify-between items-center h-16">
             {/* Logo - aligned to left edge */}
             <div className="flex items-center flex-shrink-0">
-              <div className={`${
-                state.isDarkMode ? 'bg-blue-600' : 'bg-blue-500'
-              } rounded-lg p-2 mr-3`}>
-                <div className="w-6 h-6 bg-white rounded-sm flex items-center justify-center">
-                  <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
-                </div>
+              <div className="mr-3">
+                <img 
+                  src="/confi-cal .png" 
+                  alt="Confical Logo" 
+                  className="w-10 h-10 rounded-lg"
+                />
               </div>
               <h1 className={`text-xl font-bold ${
                 state.isDarkMode ? 'text-white' : 'text-gray-900'
