@@ -50,9 +50,9 @@ export default function AiSuggestions() {
   };
 
   return (
-    <div className={`flex flex-col ${
+    <div className={`w-full transition-all duration-300 ease-in-out ${
       state.isDarkMode ? 'bg-gray-900' : 'bg-white'
-    } ${isExpanded ? 'h-full' : 'h-auto'}`}>
+    } ${isExpanded ? 'h-auto' : 'h-auto'}`}>
       {/* Header */}
       <div className={`p-4 border-b flex items-center justify-between flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
@@ -104,9 +104,11 @@ export default function AiSuggestions() {
         </div>
       </div>
 
-      {/* Suggestions Content */}
-      {isExpanded && (
-        <div className="flex-1 min-h-0 p-4">
+      {/* Suggestions Content - with proper height management */}
+      <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
+        isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+      }`}>
+        <div className="p-4">
           {state.aiSuggestions.length === 0 ? (
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -123,7 +125,7 @@ export default function AiSuggestions() {
               </p>
             </div>
           ) : (
-            <div className="relative h-full">
+            <div className="relative">
               {/* Scroll buttons */}
               {state.aiSuggestions.length > 1 && (
                 <>
@@ -152,13 +154,15 @@ export default function AiSuggestions() {
                 </>
               )}
 
-              {/* Horizontal scrolling container */}
+              {/* Horizontal scrolling container with proper height */}
               <div
                 id="suggestions-container"
-                className="flex space-x-3 overflow-x-auto scrollbar-hide h-full items-start py-2"
+                className="flex space-x-3 overflow-x-auto scrollbar-hide py-2"
                 style={{
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none',
+                  height: 'auto',
+                  minHeight: '200px', // Ensure enough height for full cards
                 }}
               >
                 {state.aiSuggestions.map((suggestion, index) => (
@@ -173,7 +177,7 @@ export default function AiSuggestions() {
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

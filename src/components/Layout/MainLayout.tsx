@@ -12,27 +12,33 @@ export default function MainLayout() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className={`h-screen grid grid-cols-[400px_1fr] grid-rows-[auto_1fr_1fr] ${
+      <div className={`h-screen flex flex-col ${
         state.isDarkMode ? 'bg-gray-900' : 'bg-gray-50'
       }`}>
         {/* Header - spans full width */}
-        <div className="col-span-2 row-span-1">
+        <div className="flex-shrink-0">
           <Header />
         </div>
         
-        {/* Chat Sidebar - spans full height of remaining space */}
-        <div className="col-span-1 row-span-2 border-r border-gray-200 dark:border-gray-700">
-          <AiSidebar />
-        </div>
-        
-        {/* AI Suggestions - top right */}
-        <div className="col-span-1 row-span-1 border-b border-gray-200 dark:border-gray-700">
-          <AiSuggestions />
-        </div>
-        
-        {/* Calendar - bottom right */}
-        <div className="col-span-1 row-span-1 overflow-hidden">
-          <ToastCalendar />
+        {/* Main content area with flexible layout */}
+        <div className="flex-1 flex min-h-0">
+          {/* Chat Sidebar - fixed width */}
+          <div className="w-[400px] flex-shrink-0 border-r border-gray-200 dark:border-gray-700">
+            <AiSidebar />
+          </div>
+          
+          {/* Right panel - flexible layout */}
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* AI Suggestions - dynamic height */}
+            <div className="flex-shrink-0">
+              <AiSuggestions />
+            </div>
+            
+            {/* Calendar - takes remaining space */}
+            <div className="flex-1 min-h-0">
+              <ToastCalendar />
+            </div>
+          </div>
         </div>
       </div>
     </DndProvider>
