@@ -276,7 +276,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * Fetch events from Google Calendar
+   * Fetch events from Google Calendar with proper timezone handling
    */
   async getEvents(
     calendarId: string = 'primary',
@@ -315,7 +315,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * Create a new event in Google Calendar
+   * Create a new event in Google Calendar with proper timezone handling
    */
   async createEvent(event: Event, calendarId: string = 'primary'): Promise<boolean> {
     try {
@@ -340,7 +340,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * Update an existing event in Google Calendar
+   * Update an existing event in Google Calendar with proper timezone handling
    */
   async updateEvent(event: Event, calendarId: string = 'primary'): Promise<boolean> {
     try {
@@ -392,7 +392,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * Convert app Event to Google Calendar event format
+   * Convert app Event to Google Calendar event format with proper timezone handling
    */
   private convertAppEventToGoogleEvent(event: Event): {
     summary: string;
@@ -401,29 +401,45 @@ class GoogleCalendarService {
     end: { dateTime: string; timeZone: string };
     colorId: string;
   } {
+    // Get user's local timezone
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    
+    // Create proper ISO datetime strings with timezone
     const startDateTime = `${event.date}T${event.startTime}:00`;
     const endDateTime = `${event.date}T${event.endTime}:00`;
+
+    console.log(`🌍 Converting app event to Google format in timezone ${userTimezone}:`, {
+      title: event.title,
+      date: event.date,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      startDateTime,
+      endDateTime
+    });
 
     return {
       summary: event.title,
       description: event.description || '',
       start: {
         dateTime: startDateTime,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timeZone: userTimezone,
       },
       end: {
         dateTime: endDateTime,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timeZone: userTimezone,
       },
       colorId: this.getGoogleColorId(event.color),
     };
   }
 
   /**
-   * Convert Google Calendar events to app Event format
+   * Convert Google Calendar events to app Event format with proper timezone handling
    */
   private convertGoogleEventsToAppEvents(googleEvents: GoogleCalendarEvent[]): Event[] {
     const convertedEvents: Event[] = [];
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    
+    console.log(`🌍 Converting ${googleEvents.length} Google Calendar events to app format in timezone ${userTimezone}`);
     
     for (const event of googleEvents) {
       if (event.status === 'cancelled') {
@@ -434,36 +450,89 @@ class GoogleCalendarService {
       const endDateTime = event.end.dateTime || event.end.date;
 
       if (!startDateTime || !endDateTime) {
+        console.warn('⚠️ Skipping event with missing date/time:', event);
         continue;
       }
 
-      const startDate = parseISO(startDateTime);
-      const endDate = parseISO(endDateTime);
+      try {
+        let startDate: Date;
+        let endDate: Date;
+        let isAllDay = false;
 
-      // Determine if this is an all-day event
-      const isAllDay = !event.start.dateTime;
+        if (event.start.dateTime) {
+          // Timed event - parse with timezone awareness
+          startDate = parseISO(event.start.dateTime);
+          endDate = parseISO(event.end.dateTime);
+          
+          console.log(`📅 Parsing timed event "${event.summary}":`, {
+            originalStart: event.start.dateTime,
+            originalEnd: event.end.dateTime,
+            parsedStart: startDate.toISOString(),
+            parsedEnd: endDate.toISOString(),
+            localStart: format(startDate, 'yyyy-MM-dd HH:mm'),
+            localEnd: format(endDate, 'yyyy-MM-dd HH:mm')
+          });
+        } else {
+          // All-day event - parse as date only
+          startDate = new Date(event.start.date + 'T00:00:00');
+          endDate = new Date(event.end.date + 'T23:59:59');
+          isAllDay = true;
+          
+          console.log(`📅 Parsing all-day event "${event.summary}":`, {
+            originalStart: event.start.date,
+            originalEnd: event.end.date,
+            parsedStart: startDate.toISOString(),
+            parsedEnd: endDate.toISOString()
+          });
+        }
 
-      convertedEvents.push({
-        id: `google_${event.id}`,
-        title: event.summary || 'Untitled Event',
-        startTime: isAllDay ? '00:00' : format(startDate, 'HH:mm'),
-        endTime: isAllDay ? '23:59' : format(endDate, 'HH:mm'),
-        date: format(startDate, 'yyyy-MM-dd'),
-        category: {
-          id: 'imported',
-          name: 'Google Calendar',
+        // Ensure dates are valid
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          console.warn('⚠️ Invalid dates for event:', event);
+          continue;
+        }
+
+        const convertedEvent: Event = {
+          id: `google_${event.id}`,
+          title: event.summary || 'Untitled Event',
+          startTime: isAllDay ? '00:00' : format(startDate, 'HH:mm'),
+          endTime: isAllDay ? '23:59' : format(endDate, 'HH:mm'),
+          date: format(startDate, 'yyyy-MM-dd'),
+          category: {
+            id: 'imported',
+            name: 'Google Calendar',
+            color: this.getColorFromColorId(event.colorId),
+            icon: 'Calendar',
+          },
+          priority: 'medium' as Priority,
+          description: event.description || '',
+          links: event.htmlLink ? [event.htmlLink] : [],
+          isCompleted: false,
+          isStatic: false,
           color: this.getColorFromColorId(event.colorId),
-          icon: 'Calendar',
-        },
-        priority: 'medium' as Priority,
-        description: event.description || '',
-        links: event.htmlLink ? [event.htmlLink] : [],
-        isCompleted: false,
-        isStatic: false,
-        color: this.getColorFromColorId(event.colorId),
-      });
+        };
+
+        console.log(`✅ Converted event "${event.summary}":`, {
+          googleEvent: {
+            start: startDateTime,
+            end: endDateTime,
+            timezone: event.start.timeZone
+          },
+          appEvent: {
+            date: convertedEvent.date,
+            startTime: convertedEvent.startTime,
+            endTime: convertedEvent.endTime
+          }
+        });
+
+        convertedEvents.push(convertedEvent);
+      } catch (error) {
+        console.error('❌ Error converting event:', event, error);
+        continue;
+      }
     }
     
+    console.log(`✅ Successfully converted ${convertedEvents.length} events`);
     return convertedEvents;
   }
 
@@ -510,12 +579,13 @@ class GoogleCalendarService {
   }
 
   /**
-   * Get events for a specific week
+   * Get events for a specific week with proper timezone handling
    */
   async getWeekEvents(weekStart: Date): Promise<Event[]> {
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 7);
 
+    console.log(`📅 Fetching week events from ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
     return this.getEvents('primary', weekStart, weekEnd);
   }
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Event } from '../types';
-import { startOfWeek, endOfWeek } from 'date-fns';
+import { startOfWeek, endOfWeek, format, parseISO } from 'date-fns';
 import { composioService } from '../services/composioService';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
@@ -41,6 +41,113 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
   }, [authState.userEmail]);
 
   /**
+   * Transform Composio calendar event to app format with proper timezone handling
+   */
+  const transformComposioEventToAppEvent = useCallback((composioEvent: any): Event => {
+    console.log('🔄 Transforming Composio event:', composioEvent);
+    
+    let startTime = '09:00';
+    let endTime = '10:00';
+    let eventDate = format(new Date(), 'yyyy-MM-dd');
+
+    try {
+      // Handle different date/time formats from Google Calendar
+      if (composioEvent.startTime) {
+        let startDateTime: Date;
+        
+        if (composioEvent.startTime.includes('T')) {
+          // ISO format with timezone: "2025-01-21T18:15:00-08:00"
+          startDateTime = parseISO(composioEvent.startTime);
+        } else if (composioEvent.startTime.includes(' ')) {
+          // Format: "2025-01-21 18:15:00"
+          startDateTime = new Date(composioEvent.startTime);
+        } else {
+          // Just time: "18:15"
+          startDateTime = new Date();
+          const [hours, minutes] = composioEvent.startTime.split(':').map(Number);
+          startDateTime.setHours(hours, minutes, 0, 0);
+        }
+
+        // Ensure we have a valid date
+        if (!isNaN(startDateTime.getTime())) {
+          eventDate = format(startDateTime, 'yyyy-MM-dd');
+          startTime = format(startDateTime, 'HH:mm');
+          console.log(`✅ Parsed start time: ${composioEvent.startTime} -> ${eventDate} ${startTime}`);
+        } else {
+          console.warn('⚠️ Invalid start time, using default:', composioEvent.startTime);
+        }
+      }
+
+      if (composioEvent.endTime) {
+        let endDateTime: Date;
+        
+        if (composioEvent.endTime.includes('T')) {
+          // ISO format with timezone
+          endDateTime = parseISO(composioEvent.endTime);
+        } else if (composioEvent.endTime.includes(' ')) {
+          // Format: "2025-01-21 19:15:00"
+          endDateTime = new Date(composioEvent.endTime);
+        } else {
+          // Just time: "19:15"
+          endDateTime = new Date();
+          const [hours, minutes] = composioEvent.endTime.split(':').map(Number);
+          endDateTime.setHours(hours, minutes, 0, 0);
+        }
+
+        // Ensure we have a valid date
+        if (!isNaN(endDateTime.getTime())) {
+          endTime = format(endDateTime, 'HH:mm');
+          console.log(`✅ Parsed end time: ${composioEvent.endTime} -> ${endTime}`);
+        } else {
+          console.warn('⚠️ Invalid end time, using default:', composioEvent.endTime);
+        }
+      }
+
+      // Handle date field separately if provided
+      if (composioEvent.date) {
+        try {
+          const dateObj = new Date(composioEvent.date);
+          if (!isNaN(dateObj.getTime())) {
+            eventDate = format(dateObj, 'yyyy-MM-dd');
+            console.log(`✅ Parsed date: ${composioEvent.date} -> ${eventDate}`);
+          }
+        } catch (dateError) {
+          console.warn('⚠️ Error parsing date field:', composioEvent.date, dateError);
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Error parsing event times:', error, composioEvent);
+    }
+
+    const transformedEvent: Event = {
+      id: composioEvent.id || `composio_${Date.now()}_${Math.random()}`,
+      title: composioEvent.title || composioEvent.summary || 'Untitled Event',
+      description: composioEvent.description || '',
+      startTime,
+      endTime,
+      date: eventDate,
+      isCompleted: false,
+      isStatic: false,
+      priority: 'medium' as const,
+      color: '#3B82F6',
+      category: {
+        id: 'composio-calendar',
+        name: 'Google Calendar',
+        color: '#3B82F6',
+        icon: '📅'
+      }
+    };
+
+    console.log('✅ Transformed event:', {
+      original: composioEvent,
+      transformed: transformedEvent
+    });
+
+    return transformedEvent;
+  }, []);
+
+  /**
    * Fetch events for a date range using Composio calendar tools
    */
   const fetchEvents = useCallback(async (startDate: Date, endDate: Date): Promise<Event[]> => {
@@ -67,26 +174,10 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
           return mockEvents;
         }
         
-        // Transform Composio events to app format
-        const transformedEvents: Event[] = response.events.map(event => ({
-          id: event.id,
-          title: event.title || 'Untitled Event',
-          description: event.description || '',
-          startTime: event.startTime || '09:00',
-          endTime: event.endTime || '10:00',
-          date: event.date || new Date().toISOString().split('T')[0],
-          isCompleted: false,
-          isStatic: false,
-          priority: 'medium' as const,
-          color: '#3B82F6',
-          category: {
-            id: 'composio-calendar',
-            name: 'Google Calendar',
-            color: '#3B82F6',
-            icon: '📅'
-          }
-        }));
+        // Transform Composio events to app format with proper timezone handling
+        const transformedEvents: Event[] = response.events.map(transformComposioEventToAppEvent);
         
+        console.log(`🔄 Transformed ${transformedEvents.length} events with proper timezone handling`);
         return transformedEvents;
       } else {
         console.warn('⚠️ Failed to fetch calendar events via Composio:', response.error);
@@ -96,7 +187,7 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
       console.error('❌ Error fetching calendar events via Composio:', error);
       throw error;
     }
-  }, [isAuthenticated, authState.userEmail]);
+  }, [isAuthenticated, authState.userEmail, transformComposioEventToAppEvent]);
 
   /**
    * Fetch events for the current week
@@ -122,15 +213,18 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
         }
       }
 
+      // Use user's local timezone for week calculation
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 }); // Sunday start
       const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 }); // Saturday end
 
-      console.log(`📅 Fetching events for week: ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
+      console.log(`📅 Fetching events for week in local timezone: ${format(weekStart, 'yyyy-MM-dd')} to ${format(weekEnd, 'yyyy-MM-dd')}`);
+      console.log(`🌍 User timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
 
       const weekEvents = await fetchEvents(weekStart, weekEnd);
       
       if (isMountedRef.current) {
         setEvents(weekEvents);
+        console.log(`✅ Successfully loaded ${weekEvents.length} events for the week`);
       }
     } catch (error) {
       console.error('❌ Error fetching current week events:', error);
@@ -153,7 +247,7 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
   }, [fetchEvents, isAuthenticated, state.currentWeek]);
 
   /**
-   * Create a new event using Composio calendar tools
+   * Create a new event using Composio calendar tools with proper timezone handling
    */
   const createEvent = useCallback(async (eventData: Omit<Event, 'id'>): Promise<boolean> => {
     if (!isAuthenticated || !authState.userEmail) {
@@ -163,11 +257,22 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
     try {
       console.log(`📝 Creating event via Composio: ${eventData.title}`);
       
+      // Convert to user's local timezone for Google Calendar
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const startDateTime = `${eventData.date}T${eventData.startTime}:00`;
+      const endDateTime = `${eventData.date}T${eventData.endTime}:00`;
+      
+      console.log(`🌍 Creating event in timezone ${userTimezone}:`, {
+        title: eventData.title,
+        startDateTime,
+        endDateTime
+      });
+      
       const response = await composioService.createCalendarEvent(authState.userEmail, {
         title: eventData.title,
         description: eventData.description,
-        startTime: `${eventData.date}T${eventData.startTime}:00`,
-        endTime: `${eventData.date}T${eventData.endTime}:00`,
+        startTime: startDateTime,
+        endTime: endDateTime,
       });
       
       if (response.success) {
@@ -185,7 +290,7 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
   }, [isAuthenticated, authState.userEmail, fetchCurrentWeek]);
 
   /**
-   * Update an existing event using Composio calendar tools
+   * Update an existing event using Composio calendar tools with proper timezone handling
    */
   const updateEvent = useCallback(async (event: Event): Promise<boolean> => {
     if (!isAuthenticated || !authState.userEmail) {
@@ -195,11 +300,22 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
     try {
       console.log(`✏️ Updating event via Composio: ${event.title}`);
       
+      // Convert to user's local timezone for Google Calendar
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const startDateTime = `${event.date}T${event.startTime}:00`;
+      const endDateTime = `${event.date}T${event.endTime}:00`;
+      
+      console.log(`🌍 Updating event in timezone ${userTimezone}:`, {
+        title: event.title,
+        startDateTime,
+        endDateTime
+      });
+      
       const response = await composioService.updateCalendarEvent(authState.userEmail, event.id, {
         title: event.title,
         description: event.description,
-        startTime: `${event.date}T${event.startTime}:00`,
-        endTime: `${event.date}T${event.endTime}:00`,
+        startTime: startDateTime,
+        endTime: endDateTime,
       });
       
       if (response.success) {
