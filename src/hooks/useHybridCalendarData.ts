@@ -140,8 +140,9 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
           setEvents(mockEvents);
           setError('Connect your Google Calendar via the AI assistant to see your real events.');
         } else {
-          setError(`Failed to fetch calendar events: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          setEvents([]);
+          // If authenticated but connection failed, show mock events with appropriate message
+          setEvents(mockEvents);
+          setError('Connection to Google Calendar failed. Showing sample events instead.');
         }
       }
     } finally {
