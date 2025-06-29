@@ -9,12 +9,14 @@ import { format } from 'date-fns';
 import EventDialog from '../EventManagement/EventDialog';
 import QuickEventCreator from '../EventManagement/QuickEventCreator';
 import EventContextMenu from '../EventManagement/EventContextMenu';
-import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
+import CalendarDateDebugger from './CalendarDateDebugger';
+import { Plus, Zap, Undo, Redo, Calendar as CalendarIcon, RefreshCw, Bug } from 'lucide-react';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { mockEvents } from '../../data/mockData';
 import composioService from '../../services/composioService';
 import { createEventWithConflictDetection } from '../../utils/aiUtils';
 import { checkEventUpdateConflicts } from '../../utils/conflictDetection';
+import { DateTimeDebugger } from '../../utils/dateTimeDebugger';
 
 interface ToastCalendarEvent {
   id: string;
@@ -55,6 +57,7 @@ export default function ToastCalendar() {
   const [view, setView] = useState<'month' | 'week' | 'day'>('week');
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [calendarInstance, setCalendarInstance] = useState<any>(null);
+  const [showDateDebugger, setShowDateDebugger] = useState(false);
 
   // Event management states
   const [eventDialog, setEventDialog] = useState<{
@@ -120,11 +123,21 @@ export default function ToastCalendar() {
     return allEvents.length > 0 ? allEvents : mockEvents;
   };
 
-  // Convert app events to Toast UI Calendar format
+  // Convert app events to Toast UI Calendar format with enhanced debugging
   const convertToToastEvents = (events: Event[]): ToastCalendarEvent[] => {
     return events.map(event => {
+      // Debug each event conversion
       const startDateTime = `${event.date}T${event.startTime}:00`;
       const endDateTime = `${event.date}T${event.endTime}:00`;
+
+      // Log potential date issues
+      DateTimeDebugger.debugDateTime(startDateTime, `Converting event: ${event.title}`);
+      
+      // Check for the specific problematic date
+      if (event.date === '2025-06-30') {
+        console.warn(`🚨 Found June 30, 2025 event: ${event.title}`);
+        DateTimeDebugger.compareEventDates(event.date, event.date, event.title);
+      }
 
       return {
         id: event.id,
@@ -150,6 +163,9 @@ export default function ToastCalendar() {
     const endDate = new Date(toastEvent.end);
     const allEvents = getAllEvents();
     const existingEvent = allEvents.find(e => e.id === toastEvent.id);
+
+    // Debug the conversion back
+    DateTimeDebugger.debugDateTime(toastEvent.start, `Converting from Toast UI: ${toastEvent.title}`);
 
     return {
       id: toastEvent.id,
@@ -315,9 +331,12 @@ export default function ToastCalendar() {
     ],
   };
 
-  // Event handlers with conflict detection
+  // Event handlers with conflict detection and enhanced debugging
   const onBeforeCreateEvent = async (eventData: any) => {
     const startDate = new Date(eventData.start);
+    
+    // Debug the event creation
+    DateTimeDebugger.debugDateTime(eventData.start, 'Creating event from calendar click');
     
     // Create the event object
     const newEventData = {
@@ -406,6 +425,9 @@ export default function ToastCalendar() {
       title: updatedEvent.title,
       changes
     });
+    
+    // Debug the update
+    DateTimeDebugger.debugDateTime(`${updatedEvent.date}T${updatedEvent.startTime}:00`, `Updating event: ${updatedEvent.title}`);
     
     // Check for conflicts with the updated event
     const conflictResult = checkEventUpdateConflicts(
@@ -738,6 +760,9 @@ export default function ToastCalendar() {
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
         setQuickCreator({ isOpen: true });
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setShowDateDebugger(true);
       }
     };
 
@@ -832,6 +857,20 @@ export default function ToastCalendar() {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Debug Button */}
+          <button
+            onClick={() => setShowDateDebugger(true)}
+            title="Debug Calendar Dates (Ctrl+Shift+D)"
+            className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
+              state.isDarkMode
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-red-500 text-white hover:bg-red-600'
+            }`}
+          >
+            <Bug className="h-4 w-4" />
+            <span className="hidden sm:inline">Debug</span>
+          </button>
+
           {/* Undo/Redo */}
           <div className="flex items-center space-x-1">
             <button
@@ -875,7 +914,7 @@ export default function ToastCalendar() {
             }`}
           >
             <Zap className="h-4 w-4" />
-            <span>Smart Add</span>
+            <span className="hidden sm:inline">Smart Add</span>
           </button>
 
           <button
@@ -888,7 +927,7 @@ export default function ToastCalendar() {
             }`}
           >
             <Plus className="h-4 w-4" />
-            <span>New Event</span>
+            <span className="hidden sm:inline">New Event</span>
           </button>
 
           {/* Enhanced Sync Button */}
@@ -909,7 +948,7 @@ export default function ToastCalendar() {
             }`}
           >
             <RefreshCw className={`h-4 w-4 ${isLoadingCalendarData ? 'animate-spin' : ''}`} />
-            <span>{isAuthenticated ? 'Sync' : 'Connect'}</span>
+            <span className="hidden sm:inline">{isAuthenticated ? 'Sync' : 'Connect'}</span>
           </button>
 
           {/* View Switcher */}
@@ -987,6 +1026,12 @@ export default function ToastCalendar() {
           />
         </div>
       </div>
+
+      {/* Date Debugger Modal */}
+      <CalendarDateDebugger
+        isVisible={showDateDebugger}
+        onClose={() => setShowDateDebugger(false)}
+      />
 
       {/* Event Management Dialogs */}
       <EventDialog
