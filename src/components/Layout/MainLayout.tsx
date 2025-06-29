@@ -40,6 +40,15 @@ export default function MainLayout() {
             </div>
           </div>
         </div>
+
+        {/* Floating image in lower right corner */}
+        <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
+          <img 
+            src="/white_circle_360x360.png" 
+            alt="Floating logo" 
+            className="h-12 w-12 opacity-80 hover:opacity-100 transition-opacity duration-200"
+          />
+        </div>
       </div>
     </DndProvider>
   );
