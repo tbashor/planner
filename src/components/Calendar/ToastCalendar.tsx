@@ -936,7 +936,7 @@ export default function ToastCalendar() {
             </div>
           </div>
 
-          {/* Loading indicator */}
+          {/* Loading indicator 
           {isLoadingCalendarData && (
             <div className="flex items-center space-x-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
@@ -946,7 +946,7 @@ export default function ToastCalendar() {
                 Syncing...
               </span>
             </div>
-          )}
+          )}*/}
         </div>
 
         <div className="flex items-center space-x-2">
