@@ -63,25 +63,53 @@ class ComposioService {
   private baseUrl: string;
 
   constructor() {
+    // Use environment variable or fallback to localhost
     this.baseUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
     console.log('🤖 Composio Service initialized:', this.baseUrl);
   }
 
   /**
-   * Make a request to the server API with improved error handling
+   * Check if server is reachable before making requests
+   */
+  private async checkServerHealth(): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for health check
+      
+      const response = await fetch(`${this.baseUrl}/api/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      return response.ok;
+    } catch (error) {
+      console.warn('⚠️ Server health check failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Make a request to the server API with improved error handling and server availability check
    */
   private async makeRequest<T>(
     endpoint: string, 
     options: RequestInit = {}
   ): Promise<T> {
     try {
+      // First check if server is available
+      const isServerHealthy = await this.checkServerHealth();
+      if (!isServerHealthy) {
+        throw new Error('Backend server is not running. Please start the server with "npm run dev" or "npm run dev:server"');
+      }
+
       const url = `${this.baseUrl}${endpoint}`;
       
       console.log('📤 Making Composio request to:', url);
       
-      // Add timeout to prevent hanging requests
+      // Increase timeout to 30 seconds for complex operations
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
       const response = await fetch(url, {
         headers: {
@@ -108,10 +136,13 @@ class ComposioService {
       // Provide more specific error messages
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
-          throw new Error('Request timed out - server may be unresponsive');
+          throw new Error('Request timed out. The server may be processing a complex operation or is unresponsive. Please try again.');
         }
-        if (error.message.includes('Failed to fetch')) {
-          throw new Error('Cannot connect to server - please ensure the backend is running');
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+          throw new Error('Cannot connect to server. Please ensure the backend server is running on port 3001. Run "npm run dev" to start both client and server.');
+        }
+        if (error.message.includes('Backend server is not running')) {
+          throw error; // Pass through our custom server check error
         }
       }
       
@@ -297,9 +328,14 @@ class ComposioService {
   async isServerAvailable(): Promise<boolean> {
     try {
       console.log('🔍 Checking server availability...');
-      await this.makeRequest('/api/health');
-      console.log('✅ Server is available');
-      return true;
+      const isHealthy = await this.checkServerHealth();
+      if (isHealthy) {
+        console.log('✅ Server is available');
+        return true;
+      } else {
+        console.warn('⚠️ Server health check failed');
+        return false;
+      }
     } catch (error) {
       console.warn('⚠️ Composio server is not available:', error);
       return false;

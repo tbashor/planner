@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, Calendar, AlertCircle, Loader2 } from 'lucide-react';
+import { Brain, ChevronLeft, ChevronRight, Check, Mail, Shield, Calendar, AlertCircle, Loader2, Server } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 
 import composioService from '../../services/composioService';
@@ -25,6 +25,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authStep, setAuthStep] = useState<'idle' | 'popup' | 'polling'>('idle');
+  const [serverStatus, setServerStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
   const [authStatus, setAuthStatus] = useState<{
     googleAuthenticated: boolean;
     composioConnected: boolean;
@@ -55,8 +56,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   });
 
   const totalSteps = 8;
-
-
 
   // Helper function to validate if an email is real (not a fallback)
   const isValidRealEmail = (email: string): boolean => {
@@ -94,15 +93,22 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     return true;
   };
 
+  // Check server availability on mount
+  useEffect(() => {
+    checkServerAvailability();
+  }, []);
+
   // Check authentication status on mount and when URL changes
   useEffect(() => {
-    checkAuthenticationStatus();
-  }, []);
+    if (serverStatus === 'available') {
+      checkAuthenticationStatus();
+    }
+  }, [serverStatus]);
 
   // Also check when the component becomes visible (user returns from OAuth)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (!document.hidden) {
+      if (!document.hidden && serverStatus === 'available') {
         console.log('🔍 Page became visible, checking auth status...');
         setTimeout(() => {
           checkAuthenticationStatus();
@@ -112,9 +118,32 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+  }, [serverStatus]);
+
+  const checkServerAvailability = async () => {
+    console.log('🔍 Checking server availability...');
+    setServerStatus('checking');
+    
+    try {
+      const isAvailable = await composioService.isServerAvailable();
+      setServerStatus(isAvailable ? 'available' : 'unavailable');
+      
+      if (!isAvailable) {
+        setAuthError('Backend server is not running. Please start the server with "npm run dev" to enable AI features.');
+      }
+    } catch (error) {
+      console.error('❌ Error checking server availability:', error);
+      setServerStatus('unavailable');
+      setAuthError('Cannot connect to backend server. Please ensure the server is running on port 3001.');
+    }
+  };
 
   const checkAuthenticationStatus = async () => {
+    if (serverStatus !== 'available') {
+      console.log('⚠️ Skipping auth check - server not available');
+      return;
+    }
+
     console.log('🔍 Checking Composio authentication status...');
     setAuthStatus(prev => ({ ...prev, isCheckingAuth: true }));
     setAuthError(null);
@@ -195,11 +224,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   };
 
-
-
-
-
   const handleStartAuthentication = async () => {
+    if (serverStatus !== 'available') {
+      setAuthError('Backend server is not available. Please start the server with "npm run dev" to enable authentication.');
+      return;
+    }
+
     setIsAuthenticating(true);
     setAuthError(null);
     setAuthStep('idle');
@@ -282,7 +312,22 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       }
     } catch (error) {
       console.error('❌ Error initiating Composio OAuth:', error);
-      setAuthError(error instanceof Error ? error.message : 'Failed to initiate authentication');
+      
+      // Provide more helpful error messages
+      let errorMessage = 'Failed to initiate authentication';
+      if (error instanceof Error) {
+        if (error.message.includes('Backend server is not running')) {
+          errorMessage = 'Backend server is not running. Please run "npm run dev" in your terminal to start both the client and server.';
+        } else if (error.message.includes('Cannot connect to server')) {
+          errorMessage = 'Cannot connect to the backend server. Please ensure it\'s running on port 3001.';
+        } else if (error.message.includes('Request timed out')) {
+          errorMessage = 'The server is taking too long to respond. Please check if the backend server is running properly.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      setAuthError(errorMessage);
       setIsAuthenticating(false);
       setAuthStep('idle');
     }
@@ -353,7 +398,17 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const handleRetryAuth = () => {
     setAuthError(null);
     setAuthStep('idle');
-    checkAuthenticationStatus();
+    checkServerAvailability();
+  };
+
+  const handleSkipAuth = () => {
+    setAuthStatus(prev => ({
+      ...prev,
+      composioSkipped: true,
+      isCheckingAuth: false,
+    }));
+    setAuthError(null);
+    // Allow user to continue with basic calendar features
   };
 
   const updateData = (field: keyof OnboardingData, value: string | string[]) => {
@@ -385,8 +440,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        // Allow proceeding if Composio authentication is complete
-        return authStatus.composioConnected && !authStatus.isCheckingAuth;
+        // Allow proceeding if server is unavailable (skip AI features) or if Composio authentication is complete
+        return serverStatus === 'unavailable' || authStatus.composioConnected || authStatus.composioSkipped;
       case 2:
         return data.name.trim().length > 0;
       case 3:
@@ -423,8 +478,72 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             </p>
             
             <div className="max-w-md mx-auto space-y-6">
+              {/* Server Status Check */}
+              {serverStatus === 'checking' && (
+                <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
+                  <div className="text-center space-y-4">
+                    <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
+                      <Loader2 className="h-8 w-8 text-white animate-spin" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        Checking Server Status
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Verifying backend server connection...
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Server Unavailable */}
+              {serverStatus === 'unavailable' && (
+                <div className="space-y-4">
+                  <div className="p-6 border-2 border-orange-200 bg-orange-50 rounded-xl">
+                    <div className="text-center space-y-4">
+                      <div className="w-16 h-16 bg-orange-500 rounded-full flex items-center justify-center mx-auto">
+                        <Server className="h-8 w-8 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-gray-900 mb-2">
+                          Backend Server Not Running
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                          The AI features require a backend server. To enable full functionality:
+                        </p>
+                        <div className="text-sm text-gray-700 text-left space-y-2 mb-4">
+                          <p className="font-medium">1. Open your terminal</p>
+                          <p className="font-medium">2. Run: <code className="bg-gray-200 px-2 py-1 rounded">npm run dev</code></p>
+                          <p className="font-medium">3. Wait for both client and server to start</p>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          You can continue without AI features for now.
+                        </p>
+                      </div>
+                      
+                      <div className="flex space-x-3">
+                        <button
+                          onClick={checkServerAvailability}
+                          className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+                        >
+                          <Loader2 className="h-4 w-4" />
+                          <span>Retry Connection</span>
+                        </button>
+                        <button
+                          onClick={handleSkipAuth}
+                          className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Continue Without AI
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Checking Authentication Status */}
-              {authStatus.isCheckingAuth && (
+              {serverStatus === 'available' && authStatus.isCheckingAuth && (
                 <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
                   <div className="text-center space-y-4">
                     <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
@@ -443,7 +562,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               )}
 
               {/* Email Input and Authentication Flow */}
-              {!authStatus.isCheckingAuth && !authStatus.googleAuthenticated && (
+              {serverStatus === 'available' && !authStatus.isCheckingAuth && !authStatus.googleAuthenticated && !authStatus.composioSkipped && (
                 <div className="p-6 border-2 border-blue-200 bg-blue-50 rounded-xl">
                   <div className="text-center space-y-4">
                     <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
@@ -525,13 +644,21 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                           </div>
                         </div>
                       )}
+                      
+                      {/* Skip Option */}
+                      <button
+                        onClick={handleSkipAuth}
+                        className="w-full text-sm text-gray-600 underline hover:no-underline"
+                      >
+                        Skip AI features for now
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Authentication Success State */}
-              {!authStatus.isCheckingAuth && authStatus.composioConnected && (
+              {serverStatus === 'available' && !authStatus.isCheckingAuth && authStatus.composioConnected && (
                 <div className="space-y-4">
                   {/* Composio Authentication Success */}
                   <div className="p-4 border-2 border-green-200 bg-green-50 rounded-xl">
@@ -565,20 +692,47 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 </div>
               )}
 
+              {/* Skipped Authentication State */}
+              {authStatus.composioSkipped && (
+                <div className="p-4 border-2 border-gray-200 bg-gray-50 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-gray-500 rounded-full flex items-center justify-center">
+                      <Calendar className="h-6 w-6 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">
+                        Basic Calendar Mode
+                      </p>
+                      <p className="text-sm text-gray-700">
+                        AI features disabled - you can enable them later
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Error Display */}
               {authError && (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
                   <div className="flex items-start space-x-3">
                     <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
                     <div className="flex-1">
-                      <p className="font-medium text-red-900">Authentication Error</p>
-                      <p className="text-sm text-red-700">{authError}</p>
-                      <button
-                        onClick={handleRetryAuth}
-                        className="text-sm text-red-600 underline hover:no-underline mt-2"
-                      >
-                        Retry Authentication Check
-                      </button>
+                      <p className="font-medium text-red-900">Connection Error</p>
+                      <p className="text-sm text-red-700 mb-2">{authError}</p>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={handleRetryAuth}
+                          className="text-sm text-red-600 underline hover:no-underline"
+                        >
+                          Retry Connection
+                        </button>
+                        <button
+                          onClick={handleSkipAuth}
+                          className="text-sm text-gray-600 underline hover:no-underline"
+                        >
+                          Continue Without AI
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -587,7 +741,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               {/* Instructions */}
               <div className="text-xs text-gray-500 text-center space-y-1">
                 <p>🔒 Secure OAuth 2.0 authentication</p>
-                <p>🤖 AI-powered calendar management (when email verified)</p>
+                <p>🤖 AI-powered calendar management (when server available)</p>
                 <p>👤 Personal AI assistant with isolated data</p>
               </div>
             </div>
@@ -617,6 +771,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                   )}
                   {!authStatus.hasValidEmail && authStatus.composioSkipped && (
                     <p className="text-orange-600 text-xs mt-1">⚠️ AI features limited without email verification</p>
+                  )}
+                  {serverStatus === 'unavailable' && (
+                    <p className="text-orange-600 text-xs mt-1">⚠️ AI features disabled - server not running</p>
                   )}
                 </div>
               )}
@@ -812,6 +969,13 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               How would you like AI to help you?
             </h2>
             <p className="text-gray-600 text-center">Select all that apply</p>
+            {serverStatus === 'unavailable' && (
+              <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl max-w-lg mx-auto">
+                <p className="text-sm text-orange-700 text-center">
+                  ⚠️ AI features require the backend server to be running
+                </p>
+              </div>
+            )}
             <div className="space-y-4 max-w-lg mx-auto">
               {[
                 { id: 'smart-scheduling', label: 'Smart scheduling suggestions' },
@@ -825,7 +989,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     data.aiPreferences.includes(option.id)
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200'
-                  }`}
+                  } ${serverStatus === 'unavailable' ? 'opacity-50' : ''}`}
                 >
                   <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
                     data.aiPreferences.includes(option.id)
@@ -842,6 +1006,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     checked={data.aiPreferences.includes(option.id)}
                     onChange={() => toggleArrayItem('aiPreferences', option.id)}
                     className="sr-only"
+                    disabled={serverStatus === 'unavailable'}
                   />
                 </label>
               ))}
@@ -872,9 +1037,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                       <p className="font-medium text-green-900">Ready to get started!</p>
                       <p className="text-sm text-green-700">Your AI assistant will be personalized for {data.email}</p>
                       <p className="text-xs text-green-600 mt-1">
-                        {authStatus.hasValidEmail 
+                        {serverStatus === 'available' && authStatus.hasValidEmail 
                           ? 'Google Calendar + Composio + OpenAI integration ready'
-                          : 'Google Calendar integration ready (AI features limited)'
+                          : serverStatus === 'available'
+                          ? 'Google Calendar integration ready (AI features limited)'
+                          : 'Basic calendar features ready (server required for AI)'
                         }
                       </p>
                     </div>
