@@ -249,7 +249,7 @@ export default function Header() {
               <h1 className={`text-xl font-bold ${
                 state.isDarkMode ? 'text-white' : 'text-gray-900'
               }`}>
-                SmartPlan
+                Confical
               </h1>
             </div>
 
