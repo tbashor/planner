@@ -288,12 +288,25 @@ export default function AiSidebar() {
       setIsComposioConnected(false);
       setServerAvailable(false);
       setConnectionStatus('error');
-      setComposioConnectionError('Failed to check AI agent connection');
+      
+      // Provide more specific error messages based on the error type
+      if (error instanceof Error) {
+        if (error.message.includes('Cannot connect to server')) {
+          setComposioConnectionError('AI agent server is not running. Please start the backend server.');
+        } else if (error.message.includes('No connection found') || error.message.includes('403')) {
+          setComposioConnectionError('Google Calendar connection needed. Use "Setup Connection" to connect your calendar.');
+        } else {
+          setComposioConnectionError(`AI agent connection error: ${error.message}`);
+        }
+      } else {
+        setComposioConnectionError('Failed to check AI agent connection');
+      }
+      
       console.error('❌ Error checking AI agent connection:', error);
     } finally {
       setIsCheckingConnections(false);
     }
-  }, [getAuthenticatedUserEmail, isCheckingConnections]);
+  }, [getAuthenticatedUserEmail, isCheckingConnections, authState.isAuthenticated, authState.connectionStatus]);
 
   // Handle OAuth completion on page load
   useEffect(() => {
@@ -491,14 +504,24 @@ export default function AiSidebar() {
       }
     } catch (setupError) {
       console.error('❌ Error setting up Composio OAuth connection:', setupError);
-      setComposioConnectionError('Failed to setup AI agent connection');
+      
+      // Provide more specific error messages
+      if (setupError instanceof Error) {
+        if (setupError.message.includes('Cannot connect to server')) {
+          setComposioConnectionError('Cannot connect to AI agent server. Please ensure the backend is running.');
+        } else {
+          setComposioConnectionError(`Setup failed: ${setupError.message}`);
+        }
+      } else {
+        setComposioConnectionError('Failed to setup AI agent connection');
+      }
       
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `composio_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `❌ An error occurred while setting up your AI agent connection. Please try again.`,
+          content: `❌ An error occurred while setting up your AI agent connection. Please ensure the backend server is running and try again.`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -667,12 +690,28 @@ export default function AiSidebar() {
       setIsProcessingMessage(false);
     } catch (error) {
       console.error(`Error processing message for ${userEmail}:`, error);
+      
+      // Provide more specific error messages based on the error type
+      let errorMessage = "I'm having trouble processing that request right now. ";
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Cannot connect to server')) {
+          errorMessage += "The AI agent server appears to be offline. Please ensure the backend is running.";
+        } else if (error.message.includes('No connection found') || error.message.includes('403')) {
+          errorMessage += "It looks like your Google Calendar isn't connected yet. Please use the 'Setup Connection' button below to connect your calendar.";
+        } else {
+          errorMessage += "Please check your connection and try again.";
+        }
+      } else {
+        errorMessage += "Please try again or use the 'Setup Connection' button if you haven't connected your Google Calendar yet.";
+      }
+      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: "I'm having trouble processing that request right now. Please check your connection and try again. The AI agent might be temporarily unavailable.",
+          content: errorMessage,
           timestamp: new Date().toISOString(),
         },
       });
@@ -751,10 +790,21 @@ export default function AiSidebar() {
       }
     } catch (error) {
       console.error('❌ AI agent connection test error:', error);
-      setComposioConnectionError('AI agent connection test failed');
+      
+      // Provide more specific error messages
+      let errorMessage = 'AI agent connection test failed';
+      if (error instanceof Error) {
+        if (error.message.includes('Cannot connect to server')) {
+          errorMessage = 'Cannot connect to AI agent server. Please ensure the backend is running.';
+        } else {
+          errorMessage = `Connection test failed: ${error.message}`;
+        }
+      }
+      
+      setComposioConnectionError(errorMessage);
       setTestResults({ 
         success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
         timestamp: new Date().toISOString()
       });
     } finally {

@@ -181,11 +181,39 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
         return transformedEvents;
       } else {
         console.warn('⚠️ Failed to fetch calendar events via Composio:', response.error);
+        
+        // Check if this is a connection error
+        if (response.error && (
+          response.error.includes('No connection found') ||
+          response.error.includes('Cannot fetch events') ||
+          response.error.includes('403') ||
+          response.error.includes('Forbidden')
+        )) {
+          // This is a connection issue, not a general error
+          console.log('🔗 Connection issue detected, user needs to setup Composio connection');
+          throw new Error('Google Calendar connection not found. Please use the "Setup Connection" button in the AI assistant to connect your calendar.');
+        }
+        
         return mockEvents;
       }
     } catch (error) {
       console.error('❌ Error fetching calendar events via Composio:', error);
-      throw error;
+      
+      // Check if this is a connection-related error
+      if (error instanceof Error && (
+        error.message.includes('No connection found') ||
+        error.message.includes('Cannot fetch events') ||
+        error.message.includes('403') ||
+        error.message.includes('Forbidden') ||
+        error.message.includes('connection not found')
+      )) {
+        // Re-throw connection errors so they can be handled appropriately
+        throw error;
+      }
+      
+      // For other errors, fall back to mock events
+      console.log('📝 Falling back to mock events due to error');
+      return mockEvents;
     }
   }, [isAuthenticated, authState.userEmail, transformComposioEventToAppEvent]);
 
@@ -233,6 +261,14 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
           // If not authenticated, use mock events instead of showing error
           setEvents(mockEvents);
           setError('Connect your Google Calendar via the AI assistant to see your real events.');
+        } else if (error instanceof Error && (
+          error.message.includes('connection not found') ||
+          error.message.includes('No connection found') ||
+          error.message.includes('Setup Connection')
+        )) {
+          // Connection-specific error
+          setEvents(mockEvents);
+          setError('Google Calendar connection needed. Use "Setup Connection" in the AI assistant to connect your calendar.');
         } else {
           // If authenticated but connection failed, show mock events with appropriate message
           setEvents(mockEvents);
