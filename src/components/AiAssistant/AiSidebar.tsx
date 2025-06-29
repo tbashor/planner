@@ -288,25 +288,12 @@ export default function AiSidebar() {
       setIsComposioConnected(false);
       setServerAvailable(false);
       setConnectionStatus('error');
-      
-      // Provide more specific error messages based on the error type
-      if (error instanceof Error) {
-        if (error.message.includes('Cannot connect to server')) {
-          setComposioConnectionError('AI agent server is not running. Please start the backend server.');
-        } else if (error.message.includes('No connection found') || error.message.includes('403')) {
-          setComposioConnectionError('Google Calendar connection needed. Use "Setup Connection" to connect your calendar.');
-        } else {
-          setComposioConnectionError(`AI agent connection error: ${error.message}`);
-        }
-      } else {
-        setComposioConnectionError('Failed to check AI agent connection');
-      }
-      
+      setComposioConnectionError('Failed to check AI agent connection');
       console.error('❌ Error checking AI agent connection:', error);
     } finally {
       setIsCheckingConnections(false);
     }
-  }, [getAuthenticatedUserEmail, isCheckingConnections, authState.isAuthenticated, authState.connectionStatus]);
+  }, [getAuthenticatedUserEmail, isCheckingConnections]);
 
   // Handle OAuth completion on page load
   useEffect(() => {
@@ -504,24 +491,14 @@ export default function AiSidebar() {
       }
     } catch (setupError) {
       console.error('❌ Error setting up Composio OAuth connection:', setupError);
-      
-      // Provide more specific error messages
-      if (setupError instanceof Error) {
-        if (setupError.message.includes('Cannot connect to server')) {
-          setComposioConnectionError('Cannot connect to AI agent server. Please ensure the backend is running.');
-        } else {
-          setComposioConnectionError(`Setup failed: ${setupError.message}`);
-        }
-      } else {
-        setComposioConnectionError('Failed to setup AI agent connection');
-      }
+      setComposioConnectionError('Failed to setup AI agent connection');
       
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `composio_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: `❌ An error occurred while setting up your AI agent connection. Please ensure the backend server is running and try again.`,
+          content: `❌ An error occurred while setting up your AI agent connection. Please try again.`,
           timestamp: new Date().toISOString(),
         },
       });
@@ -690,28 +667,12 @@ export default function AiSidebar() {
       setIsProcessingMessage(false);
     } catch (error) {
       console.error(`Error processing message for ${userEmail}:`, error);
-      
-      // Provide more specific error messages based on the error type
-      let errorMessage = "I'm having trouble processing that request right now. ";
-      
-      if (error instanceof Error) {
-        if (error.message.includes('Cannot connect to server')) {
-          errorMessage += "The AI agent server appears to be offline. Please ensure the backend is running.";
-        } else if (error.message.includes('No connection found') || error.message.includes('403')) {
-          errorMessage += "It looks like your Google Calendar isn't connected yet. Please use the 'Setup Connection' button below to connect your calendar.";
-        } else {
-          errorMessage += "Please check your connection and try again.";
-        }
-      } else {
-        errorMessage += "Please try again or use the 'Setup Connection' button if you haven't connected your Google Calendar yet.";
-      }
-      
       dispatch({
         type: 'ADD_CHAT_MESSAGE',
         payload: {
           id: `ai_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: 'ai',
-          content: errorMessage,
+          content: "I'm having trouble processing that request right now. Please check your connection and try again. The AI agent might be temporarily unavailable.",
           timestamp: new Date().toISOString(),
         },
       });
@@ -790,21 +751,10 @@ export default function AiSidebar() {
       }
     } catch (error) {
       console.error('❌ AI agent connection test error:', error);
-      
-      // Provide more specific error messages
-      let errorMessage = 'AI agent connection test failed';
-      if (error instanceof Error) {
-        if (error.message.includes('Cannot connect to server')) {
-          errorMessage = 'Cannot connect to AI agent server. Please ensure the backend is running.';
-        } else {
-          errorMessage = `Connection test failed: ${error.message}`;
-        }
-      }
-      
-      setComposioConnectionError(errorMessage);
+      setComposioConnectionError('AI agent connection test failed');
       setTestResults({ 
         success: false, 
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
         timestamp: new Date().toISOString()
       });
     } finally {
@@ -913,40 +863,6 @@ export default function AiSidebar() {
           </button>
         </div>
         
-        {/* User Info */}
-        {state.user?.email && (
-          <div className={`mt-3 text-xs ${
-            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-          }`}>
-            <div className="flex items-center space-x-2">
-              <User className="h-3 w-3" />
-              <span className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
-                {state.user.email}
-              </span>
-            </div>
-            <div className="flex items-center space-x-2 mt-1">
-              <Calendar className="h-3 w-3" />
-              <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
-              {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
-            </div>
-            {hasValidEmail ? (
-              <div className="text-green-500 mt-1">✓ Email verified - AI agent ready</div>
-            ) : (
-              <div className="text-orange-500 mt-1">⚠️ Email verification needed</div>
-            )}
-            {isComposioConnected && hasValidEmail && (
-              <div className="text-purple-500 mt-1">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
-            )}
-            {/* Enhanced Chat Context Info */}
-            {state.chatMessages.length > 0 && (
-              <div className="text-blue-500 mt-1">
-                💬 {state.chatMessages.length} messages in conversation 
-                {isComposioConnected && <span className="text-green-500"> • Full memory active</span>}
-              </div>
-            )}
-          </div>
-        )}
-        
         {/* Connection Error */}
         {composioConnectionError && (
           <div className={`mt-3 p-3 rounded-md text-sm max-h-32 overflow-y-auto ${
@@ -1012,6 +928,51 @@ export default function AiSidebar() {
           <div className={`mt-3 p-3 rounded-lg border ${
             state.isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-200 bg-gray-50'
           }`}>
+            {/* Status Information Section */}
+            <div className={`mb-4 pb-3 border-b ${
+              state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
+            }`}>
+              <h4 className={`text-sm font-medium mb-3 ${
+                state.isDarkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                Connection Status
+              </h4>
+              
+              {/* User Info */}
+              {state.user?.email && (
+                <div className={`text-xs space-y-2 ${
+                  state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    <User className="h-3 w-3" />
+                    <span className={`font-medium ${hasValidEmail ? 'text-green-600' : 'text-orange-600'}`}>
+                      {state.user.email}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="h-3 w-3" />
+                    <span>Google Calendar: {isGoogleCalendarConnected ? 'Connected' : 'Disconnected'}</span>
+                    {isGoogleCalendarConnected && <Shield className="h-3 w-3 text-green-500" />}
+                  </div>
+                  {hasValidEmail ? (
+                    <div className="text-green-500">✓ Email verified - AI agent ready</div>
+                  ) : (
+                    <div className="text-orange-500">⚠️ Email verification needed</div>
+                  )}
+                  {isComposioConnected && hasValidEmail && (
+                    <div className="text-purple-500">🤖 OpenAI agent with {lastToolsUsed > 0 ? `${lastToolsUsed} tools used recently` : 'Composio tools ready'}</div>
+                  )}
+                  {/* Enhanced Chat Context Info */}
+                  {state.chatMessages.length > 0 && (
+                    <div className="text-blue-500">
+                      💬 {state.chatMessages.length} messages in conversation 
+                      {isComposioConnected && <span className="text-green-500"> • Full memory active</span>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="space-y-2">
               {/* Setup Connection Button */}
               {state.user?.email && hasValidEmail && !isComposioConnected && (
