@@ -59,6 +59,8 @@ export default function ToastCalendar() {
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [calendarInstance, setCalendarInstance] = useState<any>(null);
   const [showDateDebugger, setShowDateDebugger] = useState(false);
+  const [isSuggestionsExpanded, setIsSuggestionsExpanded] = useState(true);
+  const [calendarHeight, setCalendarHeight] = useState('100%');
 
   // Event management states
   const [eventDialog, setEventDialog] = useState<{
@@ -99,6 +101,76 @@ export default function ToastCalendar() {
     canUndo,
     canRedo,
   } = useUndoRedo(state.events);
+
+  // Listen for AI suggestions panel toggle events and update calendar height
+  useEffect(() => {
+    const handleSuggestionsToggle = (event: CustomEvent) => {
+      const isExpanded = event.detail.isExpanded;
+      setIsSuggestionsExpanded(isExpanded);
+      
+      // Calculate new height based on suggestions panel state
+      const headerHeight = 64; // Header height in pixels
+      const suggestionsHeight = isExpanded ? 320 : 60; // Expanded vs collapsed height
+      const availableHeight = window.innerHeight - headerHeight - suggestionsHeight;
+      const newHeight = `${Math.max(availableHeight, isExpanded ? 400 : 600)}px`;
+      
+      setCalendarHeight(newHeight);
+      
+      // Update Toast UI Calendar height using setOptions and render
+      if (calendarInstance) {
+        console.log(`📏 Updating Toast UI Calendar height to: ${newHeight}`);
+        
+        try {
+          // Use setOptions to update the calendar height
+          calendarInstance.setOptions({
+            height: newHeight
+          });
+          
+          // Call render to apply the height changes
+          calendarInstance.render();
+          
+          console.log('✅ Toast UI Calendar height updated successfully');
+        } catch (error) {
+          console.error('❌ Error updating Toast UI Calendar height:', error);
+        }
+      }
+    };
+
+    window.addEventListener('aiSuggestionsToggle', handleSuggestionsToggle as EventListener);
+    
+    return () => {
+      window.removeEventListener('aiSuggestionsToggle', handleSuggestionsToggle as EventListener);
+    };
+  }, [calendarInstance]);
+
+  // Handle window resize to recalculate calendar height
+  useEffect(() => {
+    const handleResize = () => {
+      const headerHeight = 64;
+      const suggestionsHeight = isSuggestionsExpanded ? 320 : 60;
+      const availableHeight = window.innerHeight - headerHeight - suggestionsHeight;
+      const newHeight = `${Math.max(availableHeight, isSuggestionsExpanded ? 400 : 600)}px`;
+      
+      setCalendarHeight(newHeight);
+      
+      if (calendarInstance) {
+        try {
+          calendarInstance.setOptions({
+            height: newHeight
+          });
+          calendarInstance.render();
+        } catch (error) {
+          console.error('❌ Error updating calendar height on resize:', error);
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [calendarInstance, isSuggestionsExpanded]);
 
   // Sync events history with app state
   useEffect(() => {
@@ -258,6 +330,7 @@ export default function ToastCalendar() {
     useDetailPopup: false,
     isReadOnly: false,
     usageStatistics: false,
+    height: calendarHeight, // Use dynamic height
     week: {
       startDayOfWeek: 0,
       dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -771,13 +844,32 @@ export default function ToastCalendar() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [eventDialog.isOpen, quickCreator.isOpen, contextMenu.isOpen, undo, redo]);
 
-  // Initialize calendar instance
+  // Initialize calendar instance and set initial height
   useEffect(() => {
     if (calendarRef.current) {
       const instance = calendarRef.current.getInstance();
       setCalendarInstance(instance);
+      
+      // Set initial height based on current suggestions panel state
+      const headerHeight = 64;
+      const suggestionsHeight = isSuggestionsExpanded ? 320 : 60;
+      const availableHeight = window.innerHeight - headerHeight - suggestionsHeight;
+      const initialHeight = `${Math.max(availableHeight, isSuggestionsExpanded ? 400 : 600)}px`;
+      
+      setCalendarHeight(initialHeight);
+      
+      // Apply initial height to Toast UI Calendar
+      try {
+        instance.setOptions({
+          height: initialHeight
+        });
+        instance.render();
+        console.log(`📏 Initial Toast UI Calendar height set to: ${initialHeight}`);
+      } catch (error) {
+        console.error('❌ Error setting initial calendar height:', error);
+      }
     }
-  }, []);
+  }, [isSuggestionsExpanded]);
 
   // Update calendar when events change
   useEffect(() => {
@@ -839,7 +931,7 @@ export default function ToastCalendar() {
               <p className={`text-xs ${
                 state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                {isAuthenticated ? '✅ Synced' : '📱 Local calendar only'} • ⚡ Auto-conflict resolution
+                {isAuthenticated ? '✅ Synced' : '📱 Local calendar only'} • ⚡ Auto-conflict resolution • 📏 Dynamic height: {calendarHeight}
               </p>
             </div>
           </div>
@@ -858,20 +950,6 @@ export default function ToastCalendar() {
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Debug Button 
-          <button
-            onClick={() => setShowDateDebugger(true)}
-            title="Debug Calendar Dates (Ctrl+Shift+D)"
-            className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-              state.isDarkMode
-                ? 'bg-red-600 text-white hover:bg-red-700'
-                : 'bg-red-500 text-white hover:bg-red-600'
-            }`}
-          >
-            <Bug className="h-4 w-4" />
-            <span className="hidden sm:inline">Debug</span>
-          </button>
-*/}
           {/* Undo/Redo */}
           <div className="flex items-center space-x-1">
             <button
@@ -996,20 +1074,20 @@ export default function ToastCalendar() {
             : 'bg-green-50 text-green-700 border-gray-200'
         }`}>
           <div className="flex items-center justify-between">
-            <span>🔄 Real-time sync enabled with Google Calendar • ⚡ Smart conflict resolution active</span>
+            <span>🔄 Real-time sync enabled with Google Calendar • ⚡ Smart conflict resolution active • 📏 Dynamic height: {calendarHeight}</span>
             <span>Last sync: {new Date().toLocaleTimeString()}</span>
           </div>
         </div>
       )}
 
-      {/* Toast UI Calendar */}
+      {/* Toast UI Calendar with Dynamic Height */}
       <div className="flex-1 overflow-hidden">
         <div className={`h-full ${
           state.isDarkMode ? 'bg-gray-800' : 'bg-white'
         }`}>
           <Calendar
             ref={calendarRef}
-            height="100%"
+            height={calendarHeight}
             view={view}
             events={convertToToastEvents(getAllEvents())}
             calendars={calendarOptions.calendars}
