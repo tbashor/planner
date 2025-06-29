@@ -106,7 +106,16 @@ export function useHybridCalendarData(): UseHybridCalendarDataReturn {
       // Handle date field separately if provided
       if (composioEvent.date) {
         try {
-          const dateObj = new Date(composioEvent.date);
+          let dateObj: Date;
+          // Use safe date parsing to avoid timezone boundary issues
+          if (composioEvent.date.includes('T')) {
+            // ISO format - use parseISO for proper timezone handling
+            dateObj = parseISO(composioEvent.date);
+          } else {
+            // Date-only string - parse at noon local time to avoid timezone shifts
+            dateObj = new Date(composioEvent.date + 'T12:00:00');
+          }
+          
           if (!isNaN(dateObj.getTime())) {
             eventDate = format(dateObj, 'yyyy-MM-dd');
             console.log(`✅ Parsed date: ${composioEvent.date} -> ${eventDate}`);

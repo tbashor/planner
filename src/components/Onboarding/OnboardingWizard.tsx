@@ -288,6 +288,96 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   };
 
+  const handleOAuthPopup = async (oauthUrl: string, userEmail: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      console.log('🪟 Opening OAuth popup window...');
+      
+      // Calculate popup window dimensions and position
+      const width = 600;
+      const height = 700;
+      const left = (window.innerWidth - width) / 2 + window.screenX;
+      const top = (window.innerHeight - height) / 2 + window.screenY;
+      
+      // Open popup window
+      const popup = window.open(
+        oauthUrl,
+        'composio-oauth',
+        `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+      );
+
+      if (!popup) {
+        reject(new Error('Popup window was blocked. Please allow popups for this site and try again.'));
+        return;
+      }
+
+      // Poll for popup completion
+      let attempts = 0;
+      const maxAttempts = 120; // 2 minutes at 1-second intervals
+      
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        
+        try {
+          // Check if popup is closed
+          if (popup.closed) {
+            clearInterval(pollInterval);
+            console.log('🚪 OAuth popup was closed by user');
+            reject(new Error('Authentication was cancelled'));
+            return;
+          }
+
+          // Try to check popup URL (will throw if cross-origin)
+          try {
+            const popupUrl = popup.location.href;
+            
+            // Check for success callback
+            if (popupUrl.includes('composio_success=true')) {
+              const urlParams = new URLSearchParams(new URL(popupUrl).search);
+              const returnedEmail = urlParams.get('user');
+              
+              console.log('✅ OAuth popup completed successfully for:', returnedEmail);
+              clearInterval(pollInterval);
+              popup.close();
+              
+              // Process the successful OAuth
+              await handleComposioOAuthSuccess(returnedEmail || userEmail);
+              resolve();
+              return;
+            }
+            
+            // Check for error callback
+            if (popupUrl.includes('composio_error')) {
+              const urlParams = new URLSearchParams(new URL(popupUrl).search);
+              const error = urlParams.get('composio_error');
+              
+              console.error('❌ OAuth popup error:', error);
+              clearInterval(pollInterval);
+              popup.close();
+              reject(new Error(error || 'Authentication failed'));
+              return;
+            }
+            
+          } catch {
+            // Cross-origin error is expected while OAuth is in progress
+            // Continue polling
+          }
+
+          // Timeout check
+          if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            popup.close();
+            console.error('⏰ OAuth popup timed out');
+            reject(new Error('Authentication timed out. Please try again.'));
+            return;
+          }
+          
+        } catch (error) {
+          console.warn('⚠️ Error during OAuth polling:', error);
+        }
+      }, 1000); // Poll every second
+    });
+  };
+
   const handleStartAuthentication = async () => {
     if (serverStatus !== 'available') {
       setAuthError('Backend server is not available. Please start the server with "npm run dev" to enable authentication.');
@@ -311,14 +401,15 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       // Get the redirect URL for Composio OAuth
       const redirectUrl = `${window.location.origin}/oauth/callback`;
       
-      // Use Composio OAuth flow with full page redirect
+      // Use Composio OAuth flow with popup window
       const result = await composioService.setupUserConnectionWithOAuth(userEmail, redirectUrl);
       
       if (result.success && result.redirectUrl) {
-        console.log('🔗 Redirecting to Composio OAuth...');
+        console.log('🔗 Opening Composio OAuth popup...');
         
-        // Perform full page redirect instead of popup
-        window.location.href = result.redirectUrl;
+        // Open OAuth in popup window
+        await handleOAuthPopup(result.redirectUrl, userEmail);
+        setIsAuthenticating(false);
         
       } else if (result.success && result.status === 'active') {
         // Already connected
@@ -340,7 +431,13 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       // Provide more helpful error messages
       let errorMessage = 'Failed to initiate authentication';
       if (error instanceof Error) {
-        if (error.message.includes('Backend server is not running')) {
+        if (error.message.includes('Popup window was blocked')) {
+          errorMessage = 'Popup window was blocked by your browser. Please allow popups for this site and try again.';
+        } else if (error.message.includes('Authentication was cancelled')) {
+          errorMessage = 'Authentication was cancelled. Please try again if you want to connect your calendar.';
+        } else if (error.message.includes('Authentication timed out')) {
+          errorMessage = 'Authentication timed out. Please try again.';
+        } else if (error.message.includes('Backend server is not running')) {
           errorMessage = 'Backend server is not running. Please run "npm run dev" in your terminal to start both the client and server.';
         } else if (error.message.includes('Cannot connect to server')) {
           errorMessage = 'Cannot connect to the backend server. Please ensure it\'s running on port 3001.';

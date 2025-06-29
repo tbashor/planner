@@ -4,6 +4,7 @@ import { useApp } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, parse, addHours } from 'date-fns';
 import { eventCategories } from '../../data/mockData';
+import { formatEventDate } from '../../utils/dateUtils';
 import composioService from '../../services/composioService';
 
 interface QuickEventCreatorProps {
@@ -157,7 +158,7 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
                 payload: {
                   id: Date.now().toString(),
                   type: 'ai',
-                  content: `🎯 Perfect! I've created "${newEvent.title}" for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime} and synced it with your Google Calendar. The event looks great!`,
+                  content: `🎯 Perfect! I've created "${newEvent.title}" for ${formatEventDate(newEvent.date)} at ${newEvent.startTime} and synced it with your Google Calendar. The event looks great!`,
                   timestamp: new Date().toISOString(),
                 },
               });
@@ -175,7 +176,7 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
               payload: {
                 id: Date.now().toString(),
                 type: 'ai',
-                content: `🎯 I've created "${newEvent.title}" locally for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime}, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                content: `🎯 I've created "${newEvent.title}" locally for ${formatEventDate(newEvent.date)} at ${newEvent.startTime}, but couldn't sync to Google Calendar. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 timestamp: new Date().toISOString(),
               },
             });
@@ -189,7 +190,7 @@ export default function QuickEventCreator({ isOpen, onClose, initialDate, initia
             payload: {
               id: Date.now().toString(),
               type: 'ai',
-              content: `🎯 Perfect! I've created "${newEvent.title}" for ${format(new Date(newEvent.date), 'EEEE, MMMM d')} at ${newEvent.startTime} in your local calendar. Connect Google Calendar to sync events across devices.`,
+              content: `🎯 Perfect! I've created "${newEvent.title}" for ${formatEventDate(newEvent.date)} at ${newEvent.startTime} in your local calendar. Connect Google Calendar to sync events across devices.`,
               timestamp: new Date().toISOString(),
             },
           });

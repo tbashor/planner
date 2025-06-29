@@ -69,12 +69,12 @@ class ComposioService {
   }
 
   /**
-   * Check if server is reachable before making requests
+   * Check if server is reachable - separate method for explicit health checks
    */
   private async checkServerHealth(): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // Increased to 5 seconds for health check
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       
       const response = await fetch(`${this.baseUrl}/api/health`, {
         method: 'GET',
@@ -90,26 +90,20 @@ class ComposioService {
   }
 
   /**
-   * Make a request to the server API with improved error handling and server availability check
+   * Make a request to the server API with improved error handling
    */
   private async makeRequest<T>(
     endpoint: string, 
     options: RequestInit = {}
   ): Promise<T> {
     try {
-      // First check if server is available
-      const isServerHealthy = await this.checkServerHealth();
-      if (!isServerHealthy) {
-        throw new Error('Backend server is not running. Please start the server with "npm run dev" or "npm run dev:server"');
-      }
-
       const url = `${this.baseUrl}${endpoint}`;
       
       console.log('📤 Making Composio request to:', url);
       
       // Set appropriate timeout based on endpoint
       const isOAuthEndpoint = endpoint.includes('oauth') || endpoint.includes('setup-connection');
-      const timeoutMs = isOAuthEndpoint ? 10000 : 30000; // 10s for OAuth setup, 30s for other operations
+      const timeoutMs = isOAuthEndpoint ? 30000 : 15000; // 30s for OAuth setup, 15s for other operations
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -143,9 +137,6 @@ class ComposioService {
         }
         if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
           throw new Error('Cannot connect to server. Please ensure the backend server is running on port 3001. Run "npm run dev" to start both client and server.');
-        }
-        if (error.message.includes('Backend server is not running')) {
-          throw error; // Pass through our custom server check error
         }
       }
       
@@ -252,8 +243,8 @@ class ComposioService {
         hasDailyRoutines: !!(context.preferences.dailyRoutines?.length),
         hasGoals: !!(context.preferences.goals?.trim()),
         workingHours: context.preferences.workingHours,
-        preferredTimeBlocks: context.preferences.timeBlockSize || 60,
-        motivationalFeedbackEnabled: context.preferences.motivationalFeedback
+        preferredTimeBlocks: 60, // Default time block size
+        motivationalFeedbackEnabled: false // Default setting
       } : null,
       // Enhanced conversation metadata
       conversationAnalysis: context?.conversationHistory ? {

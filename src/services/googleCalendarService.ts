@@ -472,10 +472,10 @@ class GoogleCalendarService {
             localStart: format(startDate, 'yyyy-MM-dd HH:mm'),
             localEnd: format(endDate, 'yyyy-MM-dd HH:mm')
           });
-        } else {
-          // All-day event - parse as date only
-          startDate = new Date(event.start.date + 'T00:00:00');
-          endDate = new Date(event.end.date + 'T23:59:59');
+        } else if (event.start.date && event.end.date) {
+          // All-day event - parse at noon local time to avoid timezone boundary issues
+          startDate = new Date(event.start.date + 'T12:00:00');
+          endDate = new Date(event.end.date + 'T12:00:00');
           isAllDay = true;
           
           console.log(`📅 Parsing all-day event "${event.summary}":`, {
@@ -484,6 +484,9 @@ class GoogleCalendarService {
             parsedStart: startDate.toISOString(),
             parsedEnd: endDate.toISOString()
           });
+        } else {
+          console.warn('⚠️ All-day event missing date fields:', event);
+          continue;
         }
 
         // Ensure dates are valid

@@ -1,4 +1,32 @@
-import { format, parse, addMinutes, differenceInMinutes } from 'date-fns';
+import { format, parse, differenceInMinutes } from 'date-fns';
+
+/**
+ * Safely format a date string to avoid timezone boundary issues
+ * Use this instead of new Date(dateString) for date-only strings
+ */
+export function formatEventDate(dateString: string, formatString: string = 'EEEE, MMMM d'): string {
+  try {
+    let date: Date;
+    
+    if (dateString.includes('T')) {
+      // Already has time component, safe to parse directly
+      date = new Date(dateString);
+    } else {
+      // Date-only string - parse at noon local time to avoid timezone shifts
+      date = new Date(dateString + 'T12:00:00');
+    }
+    
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date string:', dateString);
+      return dateString; // Return original string if parsing fails
+    }
+    
+    return format(date, formatString);
+  } catch (error) {
+    console.warn('Error formatting date:', dateString, error);
+    return dateString; // Return original string if formatting fails
+  }
+}
 
 export function formatTime(time: string): string {
   try {

@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useHybridCalendarData } from '../../hooks/useHybridCalendarData';
 import { Event } from '../../types';
 import { format } from 'date-fns';
+import { formatEventDate } from '../../utils/dateUtils';
 import EventDialog from '../EventManagement/EventDialog';
 import QuickEventCreator from '../EventManagement/QuickEventCreator';
 import EventContextMenu from '../EventManagement/EventContextMenu';
@@ -390,7 +391,7 @@ export default function ToastCalendar() {
     if (result.conflictResolution?.hasConflict) {
       message += ` and handled scheduling conflicts automatically. ${result.conflictResolution.message}`;
     } else {
-      message += ` for ${format(new Date(result.event.date), 'EEEE, MMMM d')} at ${result.event.startTime}`;
+      message += ` for ${formatEventDate(result.event.date)} at ${result.event.startTime}`;
     }
     
     if (syncSuccess) {
@@ -857,7 +858,7 @@ export default function ToastCalendar() {
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Debug Button */}
+          {/* Debug Button 
           <button
             onClick={() => setShowDateDebugger(true)}
             title="Debug Calendar Dates (Ctrl+Shift+D)"
@@ -870,7 +871,7 @@ export default function ToastCalendar() {
             <Bug className="h-4 w-4" />
             <span className="hidden sm:inline">Debug</span>
           </button>
-
+*/}
           {/* Undo/Redo */}
           <div className="flex items-center space-x-1">
             <button
