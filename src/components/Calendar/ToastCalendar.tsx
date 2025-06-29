@@ -1066,7 +1066,7 @@ export default function ToastCalendar() {
         </div>
       </div>
 
-      {/* Sync Status Indicator */}
+      {/* Sync Status Indicator 
       {isAuthenticated && (
         <div className={`px-4 py-2 text-xs border-b ${
           state.isDarkMode 
@@ -1078,7 +1078,7 @@ export default function ToastCalendar() {
             <span>Last sync: {new Date().toLocaleTimeString()}</span>
           </div>
         </div>
-      )}
+      )}*/}
 
       {/* Toast UI Calendar with Dynamic Height */}
       <div className="flex-1 overflow-hidden">
