@@ -125,6 +125,103 @@
   overflow: hidden;
 }
 
+/* Dynamic Calendar Height Adjustments */
+.suggestions-expanded {
+  height: auto;
+  max-height: 320px;
+}
+
+.suggestions-collapsed {
+  height: 60px;
+  max-height: 60px;
+}
+
+.calendar-with-suggestions {
+  flex: 1;
+  min-height: 400px;
+}
+
+.calendar-full-height {
+  flex: 1;
+  min-height: 600px;
+}
+
+/* AI Suggestions Panel State Classes */
+.suggestions-panel-expanded {
+  height: auto;
+  max-height: 380px;
+}
+
+.suggestions-panel-collapsed {
+  height: 60px;
+  max-height: 60px;
+}
+
+/* Smooth transitions for height changes */
+.suggestions-panel-expanded,
+.suggestions-panel-collapsed,
+.calendar-with-suggestions,
+.calendar-full-height {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Responsive adjustments for dynamic heights */
+@media (max-width: 768px) {
+  .calendar-with-suggestions {
+    min-height: 300px;
+  }
+  
+  .calendar-full-height {
+    min-height: 500px;
+  }
+  
+  .suggestions-expanded {
+    max-height: 280px;
+  }
+  
+  .suggestions-panel-expanded {
+    max-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .calendar-with-suggestions {
+    min-height: 250px;
+  }
+  
+  .calendar-full-height {
+    min-height: 400px;
+  }
+  
+  .suggestions-expanded {
+    max-height: 240px;
+  }
+  
+  .suggestions-panel-expanded {
+    max-height: 280px;
+  }
+}
+
+/* Enhanced smooth transitions */
+@media (prefers-reduced-motion: no-preference) {
+  .suggestions-panel-expanded,
+  .suggestions-panel-collapsed,
+  .calendar-with-suggestions,
+  .calendar-full-height {
+    transition: all 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .suggestions-panel-expanded,
+  .suggestions-panel-collapsed,
+  .calendar-with-suggestions,
+  .calendar-full-height {
+    transition: none;
+  }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .toastui-calendar-timegrid-timezone {

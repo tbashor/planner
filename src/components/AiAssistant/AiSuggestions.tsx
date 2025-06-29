@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Lightbulb, Sparkles, ChevronDown, ChevronUp, Zap, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import AiSuggestionCard from './AiSuggestionCard';
@@ -8,6 +8,15 @@ export default function AiSuggestions() {
   const { state, dispatch } = useApp();
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+
+  // Notify parent component about expansion state changes
+  useEffect(() => {
+    // Dispatch a custom event to notify about panel state changes
+    const event = new CustomEvent('aiSuggestionsToggle', { 
+      detail: { isExpanded } 
+    });
+    window.dispatchEvent(event);
+  }, [isExpanded]);
 
   const handleGenerateSuggestions = async () => {
     if (!state.user?.preferences) return;
@@ -50,9 +59,9 @@ export default function AiSuggestions() {
   };
 
   return (
-    <div className={`w-full transition-all duration-300 ease-in-out border-b ${
+    <div className={`w-full transition-all duration-500 ease-in-out border-b ${
       state.isDarkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
-    }`}>
+    } ${isExpanded ? 'suggestions-panel-expanded' : 'suggestions-panel-collapsed'}`}>
       {/* Header */}
       <div className={`p-4 border-b flex items-center justify-between flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
@@ -93,19 +102,20 @@ export default function AiSuggestions() {
           
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className={`p-1.5 rounded-lg transition-colors ${
+            className={`p-1.5 rounded-lg transition-all duration-200 ${
               state.isDarkMode
                 ? 'text-gray-400 hover:bg-gray-700 hover:text-white'
                 : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
             }`}
+            title={isExpanded ? 'Collapse suggestions panel' : 'Expand suggestions panel'}
           >
             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
         </div>
       </div>
 
-      {/* Suggestions Content - with proper height management and responsive design */}
-      <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
+      {/* Suggestions Content - with smooth height transitions */}
+      <div className={`overflow-hidden transition-all duration-500 ease-in-out ${
         isExpanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0'
       }`}>
         <div className="p-4 w-full">
