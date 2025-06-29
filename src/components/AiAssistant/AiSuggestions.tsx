@@ -50,11 +50,11 @@ export default function AiSuggestions() {
   };
 
   return (
-    <div className={`h-full flex flex-col ${
+    <div className={`flex flex-col ${
       state.isDarkMode ? 'bg-gray-900' : 'bg-white'
-    }`}>
+    } ${isExpanded ? 'h-full' : 'h-auto'}`}>
       {/* Header */}
-      <div className={`p-4 border-b flex items-center justify-between ${
+      <div className={`p-4 border-b flex items-center justify-between flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
         <div className="flex items-center space-x-3">
@@ -106,7 +106,7 @@ export default function AiSuggestions() {
 
       {/* Suggestions Content */}
       {isExpanded && (
-        <div className="flex-1 overflow-hidden p-4">
+        <div className="flex-1 min-h-0 p-4">
           {state.aiSuggestions.length === 0 ? (
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -123,7 +123,7 @@ export default function AiSuggestions() {
               </p>
             </div>
           ) : (
-            <div className="relative">
+            <div className="relative h-full">
               {/* Scroll buttons */}
               {state.aiSuggestions.length > 1 && (
                 <>
@@ -155,11 +155,10 @@ export default function AiSuggestions() {
               {/* Horizontal scrolling container */}
               <div
                 id="suggestions-container"
-                className="flex space-x-3 overflow-x-auto scrollbar-hide pb-2"
+                className="flex space-x-3 overflow-x-auto scrollbar-hide h-full items-start py-2"
                 style={{
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none',
-                  WebkitScrollbar: { display: 'none' }
                 }}
               >
                 {state.aiSuggestions.map((suggestion, index) => (
