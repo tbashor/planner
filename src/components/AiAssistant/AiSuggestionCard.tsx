@@ -149,55 +149,57 @@ export default function AiSuggestionCard({ suggestion }: AiSuggestionCardProps) 
   };
 
   return (
-    <div className={`p-3 rounded-lg border transition-all duration-200 hover:shadow-md ${
+    <div className={`w-full h-full p-3 rounded-lg border transition-all duration-200 hover:shadow-md ${
       state.isDarkMode
         ? 'bg-gray-800 border-gray-700 hover:border-gray-600'
         : 'bg-white border-gray-200 hover:border-gray-300'
     }`}>
-      <div className="flex items-start space-x-3">
+      <div className="flex items-start space-x-3 h-full">
         <div className={`${getColor(suggestion.type)} p-1.5 rounded-lg text-white flex-shrink-0`}>
           {getIcon(suggestion.type)}
         </div>
-        <div className="flex-1 min-w-0">
-          <h4 className={`text-sm font-medium mb-1 ${
-            state.isDarkMode ? 'text-white' : 'text-gray-900'
-          }`}>
-            {suggestion.title}
-          </h4>
-          <p className={`text-xs ${
-            state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
-          }`}>
-            {suggestion.description}
-          </p>
-          {suggestion.type === 'schedule' && (
-            <p className={`text-xs mt-1 ${
-              state.isDarkMode ? 'text-blue-400' : 'text-blue-600'
+        <div className="flex-1 min-w-0 flex flex-col h-full">
+          <div className="flex-1">
+            <h4 className={`text-sm font-medium mb-1 line-clamp-2 ${
+              state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
-              ⚡ Smart scheduling with automatic conflict resolution
+              {suggestion.title}
+            </h4>
+            <p className={`text-xs line-clamp-3 ${
+              state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              {suggestion.description}
             </p>
-          )}
+            {suggestion.type === 'schedule' && (
+              <p className={`text-xs mt-1 ${
+                state.isDarkMode ? 'text-blue-400' : 'text-blue-600'
+              }`}>
+                ⚡ Smart scheduling with automatic conflict resolution
+              </p>
+            )}
+          </div>
+          
+          <div className="flex justify-end space-x-1 mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={handleReject}
+              className={`p-1.5 rounded-md hover:bg-opacity-80 transition-colors duration-200 ${
+                state.isDarkMode
+                  ? 'text-gray-400 hover:bg-gray-700'
+                  : 'text-gray-500 hover:bg-gray-100'
+              }`}
+              title="Dismiss suggestion"
+            >
+              <X className="h-3 w-3" />
+            </button>
+            <button
+              onClick={handleAccept}
+              className="p-1.5 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors duration-200"
+              title="Accept and add to calendar (with conflict resolution)"
+            >
+              <Check className="h-3 w-3" />
+            </button>
+          </div>
         </div>
-      </div>
-      
-      <div className="flex justify-end space-x-1 mt-3">
-        <button
-          onClick={handleReject}
-          className={`p-1.5 rounded-md hover:bg-opacity-80 transition-colors duration-200 ${
-            state.isDarkMode
-              ? 'text-gray-400 hover:bg-gray-700'
-              : 'text-gray-500 hover:bg-gray-100'
-          }`}
-          title="Dismiss suggestion"
-        >
-          <X className="h-3 w-3" />
-        </button>
-        <button
-          onClick={handleAccept}
-          className="p-1.5 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors duration-200"
-          title="Accept and add to calendar (with conflict resolution)"
-        >
-          <Check className="h-3 w-3" />
-        </button>
       </div>
     </div>
   );

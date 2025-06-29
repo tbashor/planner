@@ -38,36 +38,36 @@ export default function AiSuggestions() {
   const scrollLeft = () => {
     const container = document.getElementById('suggestions-container');
     if (container) {
-      container.scrollBy({ left: -300, behavior: 'smooth' });
+      container.scrollBy({ left: -280, behavior: 'smooth' });
     }
   };
 
   const scrollRight = () => {
     const container = document.getElementById('suggestions-container');
     if (container) {
-      container.scrollBy({ left: 300, behavior: 'smooth' });
+      container.scrollBy({ left: 280, behavior: 'smooth' });
     }
   };
 
   return (
-    <div className={`w-full transition-all duration-300 ease-in-out ${
-      state.isDarkMode ? 'bg-gray-900' : 'bg-white'
-    } ${isExpanded ? 'h-auto' : 'h-auto'}`}>
+    <div className={`w-full transition-all duration-300 ease-in-out border-b ${
+      state.isDarkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
+    }`}>
       {/* Header */}
       <div className={`p-4 border-b flex items-center justify-between flex-shrink-0 ${
         state.isDarkMode ? 'border-gray-700' : 'border-gray-200'
       }`}>
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <Lightbulb className="h-4 w-4 text-white" />
           </div>
-          <div>
-            <h2 className={`font-semibold ${
+          <div className="min-w-0">
+            <h2 className={`font-semibold truncate ${
               state.isDarkMode ? 'text-white' : 'text-gray-900'
             }`}>
               AI Suggestions
             </h2>
-            <p className={`text-xs ${
+            <p className={`text-xs truncate ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
             }`}>
               Personalized recommendations
@@ -75,7 +75,7 @@ export default function AiSuggestions() {
           </div>
         </div>
         
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 flex-shrink-0">
           <button
             onClick={handleGenerateSuggestions}
             disabled={isGenerating || !state.user?.preferences}
@@ -88,7 +88,7 @@ export default function AiSuggestions() {
             }`}
           >
             <Sparkles className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
-            <span>{isGenerating ? 'Generating...' : 'Generate'}</span>
+            <span className="hidden sm:inline">{isGenerating ? 'Generating...' : 'Generate'}</span>
           </button>
           
           <button
@@ -104,11 +104,11 @@ export default function AiSuggestions() {
         </div>
       </div>
 
-      {/* Suggestions Content - with proper height management */}
+      {/* Suggestions Content - with proper height management and responsive design */}
       <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
-        isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+        isExpanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0'
       }`}>
-        <div className="p-4">
+        <div className="p-4 w-full">
           {state.aiSuggestions.length === 0 ? (
             <div className={`text-center py-8 ${
               state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
@@ -125,13 +125,13 @@ export default function AiSuggestions() {
               </p>
             </div>
           ) : (
-            <div className="relative">
-              {/* Scroll buttons */}
+            <div className="relative w-full">
+              {/* Scroll buttons - only show on larger screens */}
               {state.aiSuggestions.length > 1 && (
                 <>
                   <button
                     onClick={scrollLeft}
-                    className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 ${
+                    className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 hidden md:flex ${
                       state.isDarkMode
                         ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-600'
                         : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
@@ -142,7 +142,7 @@ export default function AiSuggestions() {
                   </button>
                   <button
                     onClick={scrollRight}
-                    className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 ${
+                    className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full shadow-lg transition-all duration-200 hidden md:flex ${
                       state.isDarkMode
                         ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-600'
                         : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
@@ -154,21 +154,19 @@ export default function AiSuggestions() {
                 </>
               )}
 
-              {/* Horizontal scrolling container with proper height */}
+              {/* Horizontal scrolling container with responsive design */}
               <div
                 id="suggestions-container"
-                className="flex space-x-3 overflow-x-auto scrollbar-hide py-2"
+                className="flex space-x-3 overflow-x-auto scrollbar-hide py-2 px-1"
                 style={{
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none',
-                  height: 'auto',
-                  minHeight: '200px', // Ensure enough height for full cards
                 }}
               >
                 {state.aiSuggestions.map((suggestion, index) => (
                   <div
                     key={`${suggestion.id}_${index}`}
-                    className="flex-shrink-0 w-80"
+                    className="flex-shrink-0 w-72 sm:w-80 max-w-[calc(100vw-2rem)]"
                   >
                     <AiSuggestionCard suggestion={suggestion} />
                   </div>

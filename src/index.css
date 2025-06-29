@@ -110,6 +110,21 @@
   display: none;
 }
 
+/* Text truncation utilities */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .toastui-calendar-timegrid-timezone {
@@ -120,4 +135,21 @@
     font-size: 11px;
     padding: 1px 4px;
   }
+}
+
+/* Ensure proper containment for all elements */
+* {
+  box-sizing: border-box;
+}
+
+/* Prevent horizontal overflow */
+html, body {
+  overflow-x: hidden;
+}
+
+/* Responsive container utilities */
+.container-responsive {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
