@@ -931,7 +931,7 @@ export default function ToastCalendar() {
               <p className={`text-xs ${
                 state.isDarkMode ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                {isAuthenticated ? '✅ Synced' : '📱 Local calendar only'} • ⚡ Auto-conflict resolution • 📏 Dynamic height: {calendarHeight}
+                {isAuthenticated ? '✅ Synced' : '📱 Local calendar only'} • ⚡ Auto-conflict resolution
               </p>
             </div>
           </div>
