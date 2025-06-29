@@ -95,9 +95,9 @@ export default function AiSidebar() {
     return null;
   }, [state.user?.email, isValidRealEmail]);
 
-  // Enhanced helper function to prepare chat conversation context with BOTH user and AI messages
+  // Enhanced helper function to prepare chat conversation context with the last 6 messages
   const prepareChatContext = useCallback(() => {
-    const maxMessages = 10; // Send last 10 messages (5 exchanges) for context
+    const maxMessages = 6; // Include last 6 messages (3 exchanges) for context
     const recentMessages = state.chatMessages.slice(-maxMessages);
     
     // Format messages for the AI agent - include BOTH user and assistant messages
@@ -112,12 +112,17 @@ export default function AiSidebar() {
     const userMessages = recentMessages.filter(msg => msg.type === 'user');
     const aiMessages = recentMessages.filter(msg => msg.type === 'ai');
     
-    console.log(`📝 Preparing conversation context:`, {
+    console.log(`📝 Preparing conversation context with last 6 messages:`, {
       totalMessages: recentMessages.length,
       userMessages: userMessages.length,
       aiMessages: aiMessages.length,
       lastUserMessage: userMessages[userMessages.length - 1]?.content?.substring(0, 50),
-      lastAiMessage: aiMessages[aiMessages.length - 1]?.content?.substring(0, 50)
+      lastAiMessage: aiMessages[aiMessages.length - 1]?.content?.substring(0, 50),
+      conversationHistory: conversationHistory.map(msg => ({
+        role: msg.role,
+        preview: msg.content.substring(0, 30) + '...',
+        timestamp: msg.timestamp
+      }))
     });
 
     return {
@@ -588,11 +593,16 @@ export default function AiSidebar() {
       // Prepare enhanced context with conversation history INCLUDING AI responses
       const chatContext = prepareChatContext();
       
-      console.log(`📝 Enhanced conversation context prepared:`, {
+      console.log(`📝 Enhanced conversation context prepared with last 6 messages:`, {
         historyLength: chatContext.conversationHistory.length,
         userMessages: chatContext.conversationFlow.userMessageCount,
         aiMessages: chatContext.conversationFlow.aiMessageCount,
-        lastExchange: chatContext.conversationFlow.lastExchange
+        lastExchange: chatContext.conversationFlow.lastExchange,
+        conversationSample: chatContext.conversationHistory.map(msg => ({
+          role: msg.role,
+          preview: msg.content.substring(0, 50) + '...',
+          timestamp: msg.timestamp
+        }))
       });
       
       // Send message to OpenAI agent with Composio tools and FULL conversation context
@@ -600,7 +610,7 @@ export default function AiSidebar() {
         events: state.events,
         preferences: state.user?.preferences,
         currentDate: new Date(),
-        // Enhanced conversation history with BOTH user and AI messages
+        // Enhanced conversation history with BOTH user and AI messages (last 6 messages)
         conversationHistory: chatContext.conversationHistory,
         conversationMetadata: {
           messageCount: chatContext.messageCount,
@@ -966,7 +976,7 @@ export default function AiSidebar() {
                   {state.chatMessages.length > 0 && (
                     <div className="text-blue-500">
                       💬 {state.chatMessages.length} messages in conversation 
-                      {isComposioConnected && <span className="text-green-500"> • Full memory active</span>}
+                      {isComposioConnected && <span className="text-green-500"> • Full memory active (last 6 messages)</span>}
                     </div>
                   )}
                 </div>
@@ -1083,7 +1093,7 @@ export default function AiSidebar() {
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                     <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
-                  <span className="text-xs opacity-70">AI agent is analyzing with full conversation context...</span>
+                  <span className="text-xs opacity-70">AI agent is analyzing with conversation context...</span>
                 </div>
               </div>
             </div>
@@ -1178,7 +1188,7 @@ export default function AiSidebar() {
                 <p>🤖 Try: "What's on my calendar today?", "Schedule a meeting tomorrow", "Find me free time this week"</p>
                 {state.chatMessages.length > 0 && (
                   <p className="mt-1 opacity-75">
-                    💬 Conversation context: {Math.min(state.chatMessages.length, 10)} recent messages 
+                    💬 Conversation context: {Math.min(state.chatMessages.length, 6)} recent messages 
                     {isComposioConnected && <span className="text-green-500"> • Full memory enabled</span>}
                   </p>
                 )}
