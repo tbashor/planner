@@ -4,7 +4,6 @@ import dotenv from 'dotenv';
 import { openai } from '@ai-sdk/openai';
 import { VercelAIToolSet } from 'composio-core';
 import { generateText } from 'ai';
-
 // Load environment variables
 dotenv.config();
 
@@ -23,7 +22,7 @@ const toolset = new VercelAIToolSet({
   apiKey: process.env.COMPOSIO_API_KEY,
 });
 
-// User-specific storage for connections and entities
+// User-specific storage for connections and entities (in-memory with recovery)
 const userConnections = new Map(); // userEmail -> connection data
 const userEntities = new Map(); // userEmail -> entityId
 
@@ -416,9 +415,19 @@ async function setupUserConnectionIfNotExists(userEmail) {
 // Helper function to get user-specific tools with better error handling
 async function getUserTools(userEmail) {
   try {
-    const entityId = userEntities.get(userEmail);
+    let entityId = userEntities.get(userEmail);
+    
+    // If no entity found, attempt recovery first
     if (!entityId) {
-      throw new Error(`No entity found for user: ${userEmail}`);
+      console.log(`🔄 No entity found for ${userEmail}, attempting recovery...`);
+      const recoveredConnection = await recoverUserConnection(userEmail);
+      
+      if (recoveredConnection) {
+        entityId = recoveredConnection.entityId;
+        console.log(`✅ Recovered entity for ${userEmail}: ${entityId}`);
+      } else {
+        throw new Error(`No entity found for user: ${userEmail}`);
+      }
     }
     
     console.log(`🛠️ Getting tools for user ${userEmail} with entity ${entityId}`);
@@ -522,14 +531,101 @@ async function getUserTools(userEmail) {
   }
 }
 
+// Helper function to recover user connection from Composio after server restart
+async function recoverUserConnection(userEmail) {
+  try {
+    console.log(`🔄 Attempting to recover connection for user: ${userEmail}`);
+    
+    // Create entity ID based on user email (same logic as setupUserConnectionIfNotExists)
+    const entityId = userEmail.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    
+    try {
+      // Try to get the entity
+      const entity = await toolset.client.getEntity(entityId);
+      console.log(`✅ Found existing entity: ${entityId}`);
+      
+      // Store entity mapping
+      userEntities.set(userEmail, entityId);
+      
+      // Get connections for this entity
+      const connections = await entity.getConnections();
+      console.log(`📊 Entity ${entityId} has ${connections.length} connections`);
+      
+      if (connections.length === 0) {
+        console.log(`📝 No connections found for entity ${entityId}`);
+        return null;
+      }
+      
+      // Find Google Calendar connection
+      const googleConnection = connections.find(conn => {
+        const appName = (conn.appName || conn.app || '').toLowerCase();
+        return appName === 'googlecalendar' || 
+               appName === 'google_calendar' ||
+               appName === 'google-calendar' ||
+               appName === 'calendar';
+      });
+      
+      if (googleConnection) {
+        console.log(`🔍 Found Google Calendar connection: ${googleConnection.id} with status: ${googleConnection.status}`);
+        
+        // Determine connection status
+        const activeStates = ['active', 'connected', 'ready', 'authenticated', 'initiated'];
+        const isActive = googleConnection.status && 
+                        activeStates.some(state => 
+                          googleConnection.status.toLowerCase().includes(state.toLowerCase())
+                        );
+        
+        const connectionData = {
+          entityId,
+          connectionId: googleConnection.id,
+          status: isActive ? 'active' : 'pending',
+          recoveredAt: new Date().toISOString(),
+          originalStatus: googleConnection.status
+        };
+        
+        // Store recovered connection
+        userConnections.set(userEmail, connectionData);
+        
+        console.log(`✅ Successfully recovered connection for ${userEmail}:`, connectionData);
+        return connectionData;
+      } else {
+        console.log(`📝 No Google Calendar connection found for entity ${entityId}`);
+        return null;
+      }
+    } catch (entityError) {
+      if (entityError.message && entityError.message.includes('not found')) {
+        console.log(`📝 Entity ${entityId} not found in Composio - user needs to authenticate`);
+        return null;
+      } else {
+        console.error(`❌ Error accessing entity ${entityId}:`, entityError);
+        throw entityError;
+      }
+    }
+  } catch (error) {
+    console.error(`❌ Error recovering connection for ${userEmail}:`, error);
+    return null;
+  }
+}
+
 // Helper function to check if connection is active with better error handling
 async function checkConnectionStatus(userEmail) {
   try {
-    const connectionData = userConnections.get(userEmail);
-    const entityId = userEntities.get(userEmail);
+    let connectionData = userConnections.get(userEmail);
+    let entityId = userEntities.get(userEmail);
     
+    // If connection not found, attempt recovery first
     if (!connectionData || !entityId) {
-      return { status: 'not_found', message: 'No connection found', needsSetup: true };
+      console.log(`🔄 Connection not found for ${userEmail}, attempting recovery...`);
+      const recoveredConnection = await recoverUserConnection(userEmail);
+      
+      if (recoveredConnection) {
+        connectionData = recoveredConnection;
+        entityId = recoveredConnection.entityId;
+        console.log(`✅ Successfully recovered connection for ${userEmail}`);
+      } else {
+        console.log(`📝 Could not recover connection for ${userEmail} - needs setup`);
+        return { status: 'not_found', message: 'No connection found', needsSetup: true };
+      }
     }
     
     // If we have an error state, return it
@@ -1380,15 +1476,27 @@ ${systemContext}
 
 INSTRUCTIONS:
 1. Always be helpful, friendly, encouraging, and proactive
-2. When users ask about their schedule, use GOOGLECALENDAR_LIST_EVENTS to get current information
-3. For creating events, prefer GOOGLECALENDAR_CREATE_EVENT for structured data or GOOGLECALENDAR_QUICK_ADD for natural language
-4. When scheduling, consider the user's preferences and existing events to avoid conflicts. When a conflict occurs, schedule the new event in next logical time slot based on the user's preferences.
-5. Use GOOGLECALENDAR_FIND_FREE_TIME to suggest optimal scheduling times based on the user's preferences
-6. Be specific about dates and times when creating or modifying events
-7. Do not confirm actions before performing destructive operations like deleting events.
-8. Provide helpful suggestions based on the user's focus areas and productivity patterns, always provide encouragement.
-9. If you need to check for conflicts or find free time, use the appropriate tools first
-10. Always explain what you're doing and why but follow user requests without questioning
+2. When users ask about their schedule, use GOOGLECALENDAR_LIST_EVENTS to get current information from Google Calendar
+3. For date queries like "Thursday, June 3" or "what events do I have on June 3", ALWAYS use GOOGLECALENDAR_LIST_EVENTS first
+4. When converting natural language dates to ISO format for GOOGLECALENDAR_LIST_EVENTS:
+   - For "June 3" or "June 3rd" without year, assume current year (${new Date().getFullYear()})
+   - Convert to proper ISO format: "YYYY-MM-DDTHH:MM:SSZ"
+   - For a specific day, set timeMin to start of day (00:00:00Z) and timeMax to end of day (23:59:59Z)
+   - Example: "June 3, 2025" becomes timeMin: "2025-06-03T00:00:00Z", timeMax: "2025-06-03T23:59:59Z"
+5. For creating events, prefer GOOGLECALENDAR_CREATE_EVENT for structured data or GOOGLECALENDAR_QUICK_ADD for natural language
+6. When scheduling, consider the user's preferences and existing events to avoid conflicts. When a conflict occurs, schedule the new event in next logical time slot based on the user's preferences.
+7. Use GOOGLECALENDAR_FIND_FREE_TIME to suggest optimal scheduling times based on the user's preferences
+8. Be specific about dates and times when creating or modifying events
+9. Do not confirm actions before performing destructive operations like deleting events.
+10. Provide helpful suggestions based on the user's focus areas and productivity patterns, always provide encouragement.
+11. If you need to check for conflicts or find free time, use the appropriate tools first
+12. Always explain what you're doing and why but follow user requests without questioning
+13. When using GOOGLECALENDAR_LIST_EVENTS, use these parameters:
+    - calendarId: "primary" (default)
+    - timeMin: ISO datetime string for start of period
+    - timeMax: ISO datetime string for end of period
+    - singleEvents: true
+    - orderBy: "startTime"
 
 PERSONALITY:
 - Supportive, freindly, helpful, conversational
@@ -1401,10 +1509,16 @@ PERSONALITY:
 - Offering encouragemnet at the end of every reply and supportive of all requests unless conflicting with user's preferances
 - Include an inspiration quote in your greeting to the user
 
-IMPORTANT: You have access to these Google Calendar tools: ${Object.keys(tools).join(', ')}
-If the user asks about viewing their calendar events or current schedule, you should explain that you can help create, update, and delete events, but reading existing events may require additional setup.
+IMPORTANT: You have full access to Google Calendar through these tools: ${Object.keys(tools).join(', ')}
+Always use GOOGLECALENDAR_LIST_EVENTS when users ask about their schedule, events, or what's on their calendar for specific dates.
 
-Remember: Use the available tools intelligently to provide the best possible assistance within the current capabilities.`;
+DATE CONVERSION EXAMPLES:
+- "What events do I have on Thursday?" → determine current Thursday date, use GOOGLECALENDAR_LIST_EVENTS with that day's timeMin/timeMax
+- "What's on my calendar June 3?" → use timeMin: "2025-06-03T00:00:00Z", timeMax: "2025-06-03T23:59:59Z"
+- "What do I have today?" → use current date with full day range
+- "Show me this week's events" → use current week start/end dates
+
+Remember: Use the available tools intelligently to provide the best possible assistance. Always try to fetch real calendar data using GOOGLECALENDAR_LIST_EVENTS before responding about the user's schedule.`;
 
     console.log(`🤖 Sending request to OpenAI agent for ${userEmail} with ${tools ? Object.keys(tools).length : 0} tools`);
     
@@ -1426,7 +1540,18 @@ Remember: Use the available tools intelligently to provide the best possible ass
     if (output.toolCalls && output.toolCalls.length > 0) {
       console.log('🔧 Tools used:');
       output.toolCalls.forEach((call, index) => {
-        console.log(`  ${index + 1}. ${call.toolName} - ${call.args ? JSON.stringify(call.args).substring(0, 100) : 'no args'}...`);
+        console.log(`  ${index + 1}. ${call.toolName} - Args: ${call.args ? JSON.stringify(call.args, null, 2) : 'no args'}`);
+      });
+    }
+    
+    // Log tool results for debugging
+    if (output.toolResults && output.toolResults.length > 0) {
+      console.log('📋 Tool results:');
+      output.toolResults.forEach((result, index) => {
+        console.log(`  ${index + 1}. Tool: ${result.toolCallId} - Result preview: ${JSON.stringify(result.result).substring(0, 200)}...`);
+        if (result.error) {
+          console.error(`  ❌ Tool Error: ${result.error}`);
+        }
       });
     }
     
