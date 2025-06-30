@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "preview": "vite preview --port 5173 --host",
     "server": "node server/index.js",
-    "client": "vite --port 5173 --host"
+    "client": "vite --port 5173 --host",
+    "start": "concurrently \"npm run server\" \"npm run client\"",
   },
   "dependencies": {
     "@ai-sdk/openai": "^0.0.66",
