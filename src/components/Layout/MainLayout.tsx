@@ -67,11 +67,13 @@ export default function MainLayout() {
 
         {/* Floating image in lower right corner */}
         <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
+          <a href="https://bolt.new" alt="bolt.new">
           <img 
-            src="/white_circle_360x360.png" 
+            src="/black_circle_360x360.png" 
             alt="Floating logo" 
             className="h-12 w-12 opacity-80 hover:opacity-100 transition-opacity duration-200"
           />
+          </a>
         </div>
       </div>
     </DndProvider>
